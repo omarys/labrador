@@ -1,0 +1,4 @@
+[tools]
+go = "1.26.6"
+golangci-lint = "2.12.2"
+pre-commit = "4.6.2"
