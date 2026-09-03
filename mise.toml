@@ -1,4 +1,24 @@
 [tools]
-go = "1.26.6"
-golangci-lint = "2.12.2"
+go = "1.27.1"
+golangci-lint = "2.13.2"
 pre-commit = "4.6.2"
+
+[tasks.update]
+description = "Update Go module dependencies"
+run = "go get -u ./... && go mod tidy"
+
+[tasks.tidy]
+description = "Tidy Go module dependencies"
+run = "go mod tidy"
+
+[tasks.test]
+description = "Run tests with race detection"
+run = "go test -race ./..."
+
+[tasks.build]
+description = "Build Labrador binary into bin/"
+run = "go build -o bin/labrador ./cmd/labrador"
+
+[tasks.install]
+description = "Install Labrador binary into GOBIN"
+run = "go install ./cmd/labrador"

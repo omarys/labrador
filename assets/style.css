@@ -1,0 +1,172 @@
+:root {
+  --bg: #fffff8;
+  --text: #111111;
+  --text-muted: #555555;
+  --accent: #b93b2a;
+  --code-bg: #f4f3ec;
+  --border: #e0ded4;
+  --card-bg: #ffffff;
+  --success: #2e7d32;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a1c;
+    --text: #f0f0f0;
+    --text-muted: #a0a0a5;
+    --accent: #e56a54;
+    --code-bg: #26262b;
+    --border: #38383e;
+    --card-bg: #222226;
+    --success: #4caf50;
+  }
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  margin: 0;
+  padding: 2rem 1.5rem;
+  display: flex;
+  justify-content: center;
+}
+
+.container {
+  max-width: 780px;
+  width: 100%;
+}
+
+header {
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 1rem;
+  margin-bottom: 2rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background-color: var(--accent);
+  color: #ffffff;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+h1 {
+  font-size: 2.1rem;
+  margin: 0.2rem 0 0.5rem 0;
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: 1.4rem;
+  margin-top: 2rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem;
+}
+
+h3 {
+  font-size: 1.15rem;
+  margin-top: 1.5rem;
+}
+
+p, ul, ol {
+  margin-bottom: 1.25rem;
+}
+
+li {
+  margin-bottom: 0.35rem;
+}
+
+code {
+  font-family: var(--font-mono);
+  background-color: var(--code-bg);
+  padding: 0.15rem 0.35rem;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+pre {
+  background-color: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.5;
+}
+
+pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.callout {
+  background-color: var(--card-bg);
+  border-left: 4px solid var(--accent);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  padding: 1rem 1.25rem;
+  border-radius: 4px;
+  margin: 1.5rem 0;
+}
+
+.callout h4 {
+  margin: 0 0 0.5rem 0;
+  color: var(--accent);
+}
+
+.quiz-box {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.5rem;
+  margin: 2rem 0;
+}
+
+.quiz-option {
+  display: block;
+  background-color: var(--code-bg);
+  border: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.quiz-option:hover {
+  border-color: var(--accent);
+}
+
+.quiz-option.correct {
+  background-color: rgba(46, 125, 50, 0.15);
+  border-color: var(--success);
+}
+
+.interactive-check {
+  display: flex;
+  align-items: flex-start;
+  margin: 0.75rem 0;
+}
+
+.interactive-check input {
+  margin-top: 0.3rem;
+  margin-right: 0.75rem;
+}
+
+footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}

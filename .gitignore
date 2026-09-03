@@ -1,0 +1,15 @@
+# Binaries and build outputs
+/bin/
+/dist/
+labrador
+
+# Private Providers (kept local, never pushed to git)
+/internal/providers/private/
+/internal/providers/private_enabled.go
+
+# Local Scratch & Cache
+/.scratch/
+.DS_Store
+*.log
+*.cbz
+*.zip
