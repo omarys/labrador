@@ -369,6 +369,10 @@ func (m *Model) updateSearchBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			selected := m.searchResults[m.searchCursor]
 			if m.selectMode {
 				m.selectedURL = selected.Series.URL
+				m.selectedSeries = &selected.Series
+				if selected.Provider != nil {
+					m.selectedProvider = selected.Provider.Name()
+				}
 				if m.searchCancel != nil {
 					m.searchCancel()
 				}

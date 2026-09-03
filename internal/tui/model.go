@@ -119,8 +119,10 @@ type Model struct {
 	hideCompleted bool
 
 	// Select mode (for Dewey interactive URL resolution)
-	selectMode  bool
-	selectedURL string
+	selectMode       bool
+	selectedURL      string
+	selectedSeries   *domain.Series
+	selectedProvider string
 
 	// Search streaming & cancellation
 	searchCancel    context.CancelFunc
@@ -190,8 +192,15 @@ func NewSelectModel(reg *provider.Registry, dl *downloader.Downloader, ctx conte
 	m.selectMode = true
 	m.screen = screenSearch
 	m.activeTab = tabSearch
-	m.textInput.SetValue(query)
-	m.textInput.Blur()
+	if query != "" {
+		m.textInput.SetValue(query)
+		m.textInput.Blur()
+		m.isLoading = true
+	} else {
+		m.textInput.SetValue("")
+		m.textInput.Focus()
+		m.isLoading = false
+	}
 
 	preferred := map[string]bool{
 		"mangakatana":     true,
@@ -213,7 +222,6 @@ func NewSelectModel(reg *provider.Registry, dl *downloader.Downloader, ctx conte
 		}
 	}
 
-	m.isLoading = query != ""
 	return m
 }
 

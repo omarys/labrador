@@ -97,6 +97,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 					selected := m.searchResults[idx]
 					if m.selectMode {
 						m.selectedURL = selected.Series.URL
+						m.selectedSeries = &selected.Series
+						if selected.Provider != nil {
+							m.selectedProvider = selected.Provider.Name()
+						}
 						if m.searchCancel != nil {
 							m.searchCancel()
 						}
@@ -150,6 +154,10 @@ func (m *Model) handleTouchBarClick(x int) (tea.Model, tea.Cmd) {
 			if x < 15 && len(m.searchResults) > 0 {
 				selected := m.searchResults[m.searchCursor]
 				m.selectedURL = selected.Series.URL
+				m.selectedSeries = &selected.Series
+				if selected.Provider != nil {
+					m.selectedProvider = selected.Provider.Name()
+				}
 				if m.searchCancel != nil {
 					m.searchCancel()
 				}

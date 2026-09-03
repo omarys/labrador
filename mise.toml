@@ -16,9 +16,10 @@ description = "Run tests with race detection"
 run = "go test -race ./..."
 
 [tasks.build]
-description = "Build Labrador binary into bin/"
-run = "go build -o bin/labrador ./cmd/labrador"
+description = "Build optimized Labrador binary into bin/"
+run = "go build -ldflags=\"-s -w\" -o bin/labrador ./cmd/labrador"
 
-[tasks.install]
-description = "Install Labrador binary into GOBIN"
-run = "go install ./cmd/labrador"
+[tasks.in]
+description = "Build and install Labrador binary into ~/.local/bin and ~/.cargo/bin"
+depends = ["build"]
+run = "./install.sh"

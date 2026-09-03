@@ -517,25 +517,30 @@ func (a *App) runSelect(ctx context.Context, args []string) error {
 		query = strings.Join(fs.Args(), " ")
 	}
 
-	chosenURL, err := tui.RunSelect(ctx, a.Registry, a.Downloader, query)
+	chosen, err := tui.RunSelect(ctx, a.Registry, a.Downloader, query)
 	if err != nil {
 		return fmt.Errorf("select failed: %w", err)
 	}
 
-	if chosenURL == "" {
+	if chosen == nil || chosen.URL == "" {
 		return nil // User cancelled
 	}
 
 	if *outputFile != "" {
-		_ = os.WriteFile(*outputFile, []byte(chosenURL), 0644)
+		if *jsonOutput {
+			data, _ := json.Marshal(chosen)
+			_ = os.WriteFile(*outputFile, data, 0644)
+		} else {
+			_ = os.WriteFile(*outputFile, []byte(chosen.URL), 0644)
+		}
 	}
 
 	if *jsonOutput {
 		enc := json.NewEncoder(a.Stdout)
-		return enc.Encode(map[string]string{"url": chosenURL})
+		return enc.Encode(chosen)
 	}
 
-	_, _ = fmt.Fprintln(a.Stdout, chosenURL)
+	_, _ = fmt.Fprintln(a.Stdout, chosen.URL)
 	return nil
 }
 

@@ -24,9 +24,16 @@ func Run(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downl
 	return err
 }
 
+// SelectedSeriesInfo holds details of a series picked in Select mode.
+type SelectedSeriesInfo struct {
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	Provider string `json:"provider,omitempty"`
+}
+
 // RunSelect launches the TUI directly on the search screen across all providers,
-// returning the chosen series URL when the user presses Enter.
-func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downloader, query string) (string, error) {
+// returning the chosen series information when the user presses Enter.
+func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downloader, query string) (*SelectedSeriesInfo, error) {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
@@ -34,10 +41,18 @@ func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader
 	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if fm, ok := finalModel.(*Model); ok {
-		return fm.selectedURL, nil
+	if fm, ok := finalModel.(*Model); ok && fm.selectedURL != "" {
+		title := fm.selectedURL
+		if fm.selectedSeries != nil && fm.selectedSeries.Title != "" {
+			title = fm.selectedSeries.Title
+		}
+		return &SelectedSeriesInfo{
+			Title:    title,
+			URL:      fm.selectedURL,
+			Provider: fm.selectedProvider,
+		}, nil
 	}
-	return "", nil
+	return nil, nil
 }
