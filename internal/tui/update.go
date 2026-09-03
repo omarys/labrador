@@ -519,14 +519,22 @@ func (m *Model) startNextDownload() (tea.Model, tea.Cmd) {
 			m.isDownloading = true
 			targetItem := item
 			return m, func() tea.Msg {
+				outputDir := targetItem.OutputDir
+				if outputDir == "" {
+					outputDir = m.outputDir
+				}
+				seriesDir := targetItem.SeriesDir
+				if seriesDir == "" {
+					seriesDir = m.seriesDir
+				}
 				_, err := m.downloader.DownloadChapter(
 					m.ctx,
 					targetItem.Provider,
 					targetItem.Series,
 					targetItem.Chapter,
 					downloader.DownloadOptions{
-						OutputDir: m.outputDir,
-						SeriesDir: m.seriesDir,
+						OutputDir: outputDir,
+						SeriesDir: seriesDir,
 					},
 				)
 				return queueDownloadFinishedMsg{

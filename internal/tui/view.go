@@ -186,8 +186,15 @@ func (m *Model) renderChapterDetails(width int) string {
 	b.WriteString(metadataLabelStyle.Render("Total Chapters: ") + metadataValueStyle.Render(fmt.Sprintf("%d", len(m.chapters))) + "\n")
 	b.WriteString(metadataLabelStyle.Render("Selected: ") + lipgloss.NewStyle().Foreground(draculaGreen).Bold(true).Render(fmt.Sprintf("%d", len(m.selectedChapters))) + "\n")
 
-	homeDir, _ := os.UserHomeDir()
-	dest := filepath.Join(homeDir, "Downloads", "Manga", m.activeSeries.Title)
+	dest := m.seriesDir
+	if dest == "" {
+		if m.outputDir != "" {
+			dest = filepath.Join(m.outputDir, m.activeSeries.Title)
+		} else {
+			homeDir, _ := os.UserHomeDir()
+			dest = filepath.Join(homeDir, "Downloads", "Manga", m.activeSeries.Title)
+		}
+	}
 	if len([]rune(dest)) > width-14 {
 		dest = string([]rune(dest)[:width-15]) + "…"
 	}

@@ -47,6 +47,8 @@ type QueueItem struct {
 	Status       QueueItemStatus
 	ErrorMessage string
 	AddedAt      time.Time
+	OutputDir    string
+	SeriesDir    string
 }
 
 // Async messages

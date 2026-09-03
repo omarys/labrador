@@ -257,12 +257,14 @@ func (m *Model) queueSelectedChapters() (tea.Model, tea.Cmd) {
 		for _, ch := range toQueue {
 			chKey := chapterKey(ch)
 			m.queue = append(m.queue, &QueueItem{
-				ID:       fmt.Sprintf("%s:%s:%s", m.activeProvider.ID(), m.activeSeries.ID, chKey),
-				Provider: m.activeProvider,
-				Series:   m.activeSeries,
-				Chapter:  ch,
-				Status:   StatusQueued,
-				AddedAt:  time.Now(),
+				ID:        fmt.Sprintf("%s:%s:%s", m.activeProvider.ID(), m.activeSeries.ID, chKey),
+				Provider:  m.activeProvider,
+				Series:    m.activeSeries,
+				Chapter:   ch,
+				Status:    StatusQueued,
+				AddedAt:   time.Now(),
+				OutputDir: m.outputDir,
+				SeriesDir: m.seriesDir,
 			})
 		}
 		m.statusMsg = fmt.Sprintf("Added %d chapter(s) to queue (press 'Q' to view)", len(toQueue))

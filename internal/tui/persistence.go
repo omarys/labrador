@@ -22,6 +22,8 @@ type SavedQueueItem struct {
 	Status       QueueItemStatus `json:"status"`
 	AddedAt      time.Time       `json:"added_at"`
 	ErrorMessage string          `json:"error_message,omitempty"`
+	OutputDir    string          `json:"output_dir,omitempty"`
+	SeriesDir    string          `json:"series_dir,omitempty"`
 }
 
 func getCacheFilePath() string {
@@ -58,6 +60,8 @@ func (m *Model) DumpQueue() error {
 				Status:       status,
 				AddedAt:      item.AddedAt,
 				ErrorMessage: item.ErrorMessage,
+				OutputDir:    item.OutputDir,
+				SeriesDir:    item.SeriesDir,
 			})
 		}
 	}
@@ -94,6 +98,8 @@ func dumpQueueAsyncCmd(queue []*QueueItem) tea.Cmd {
 				Status:       status,
 				AddedAt:      item.AddedAt,
 				ErrorMessage: item.ErrorMessage,
+				OutputDir:    item.OutputDir,
+				SeriesDir:    item.SeriesDir,
 			})
 		}
 	}
@@ -140,6 +146,8 @@ func (m *Model) LoadPersistedQueue() {
 			Status:       StatusQueued,
 			AddedAt:      s.AddedAt,
 			ErrorMessage: s.ErrorMessage,
+			OutputDir:    s.OutputDir,
+			SeriesDir:    s.SeriesDir,
 		})
 	}
 }
