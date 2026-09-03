@@ -60,12 +60,13 @@ func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader
 
 // RunChapters launches the TUI directly on the chapter listing for the given series URL or title,
 // allowing the user to select multiple chapters and queue downloads.
-func RunChapters(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downloader, seriesURL string, seriesTitle string, outputDir string) error {
+func RunChapters(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downloader, seriesURL string, seriesTitle string, seriesDir string) error {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
 	m := NewModel(reg, dl, ctx, cancel)
-	m.outputDir = outputDir
+	m.seriesDir = seriesDir
+	m.outputDir = seriesDir
 	m.directChaptersMode = true
 	m.LoadPersistedQueue()
 

@@ -526,6 +526,7 @@ func (m *Model) startNextDownload() (tea.Model, tea.Cmd) {
 					targetItem.Chapter,
 					downloader.DownloadOptions{
 						OutputDir: m.outputDir,
+						SeriesDir: m.seriesDir,
 					},
 				)
 				return queueDownloadFinishedMsg{

@@ -27,6 +27,7 @@ const (
 // DownloadOptions configures destination paths for downloads.
 type DownloadOptions struct {
 	OutputDir  string // Directory to write <Series>/<Chapter>.cbz
+	SeriesDir  string // Explicit series directory (writes <Chapter>.cbz directly inside it, no extra subfolder)
 	OutputFile string // Explicit file path (overrides OutputDir)
 }
 
@@ -193,17 +194,29 @@ func (d *Downloader) DownloadChapter(
 	// 4. Determine destination path
 	destPath := opts.OutputFile
 	if destPath == "" {
-		outDir := opts.OutputDir
-		if outDir == "" {
-			home, _ := os.UserHomeDir()
-			outDir = filepath.Join(home, "Downloads", "Manga")
-		}
 		sanitizedSeries := sanitizeFilename(series.Title)
 		sanitizedChapter := sanitizeFilename(chapter.Title)
 		if sanitizedChapter == "" {
 			sanitizedChapter = fmt.Sprintf("Chapter_%d", chapter.Index)
 		}
-		destPath = filepath.Join(outDir, sanitizedSeries, fmt.Sprintf("%s - %s.cbz", sanitizedSeries, sanitizedChapter))
+		filename := fmt.Sprintf("%s - %s.cbz", sanitizedSeries, sanitizedChapter)
+
+		if opts.SeriesDir != "" {
+			destPath = filepath.Join(opts.SeriesDir, filename)
+		} else if opts.OutputDir != "" {
+			base := filepath.Base(filepath.Clean(opts.OutputDir))
+			cleanBase := strings.ToLower(strings.ReplaceAll(base, "_", " "))
+			cleanSeries := strings.ToLower(strings.ReplaceAll(sanitizedSeries, "_", " "))
+			if cleanBase == cleanSeries {
+				destPath = filepath.Join(opts.OutputDir, filename)
+			} else {
+				destPath = filepath.Join(opts.OutputDir, sanitizedSeries, filename)
+			}
+		} else {
+			home, _ := os.UserHomeDir()
+			outDir := filepath.Join(home, "Downloads", "Manga")
+			destPath = filepath.Join(outDir, sanitizedSeries, filename)
+		}
 	}
 
 	// 5. Build .cbz archive

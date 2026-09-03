@@ -133,6 +133,7 @@ type Model struct {
 
 	// Output directory for downloaded chapters
 	outputDir          string
+	seriesDir          string
 	directChaptersMode bool
 
 	// Touch / click tracking

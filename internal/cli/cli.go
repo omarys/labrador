@@ -193,6 +193,7 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 	urlFlag := fs.String("url", "", "Series or Chapter URL")
 	chapterFlag := fs.String("chapter", "", "Chapter number or title (e.g. 105 or 105.5)")
 	outputDir := fs.String("output-dir", "", "Target library directory")
+	seriesDir := fs.String("series-dir", "", "Target series directory (downloads directly inside without extra subfolder)")
 	outputFile := fs.String("output-file", "", "Target .cbz file path:")
 	jsonOutput := fs.Bool("json", false, "Output result as JSON")
 
@@ -320,6 +321,7 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 	// Execute download
 	res, err := a.Downloader.DownloadChapter(ctx, prov, series, *targetChapter, downloader.DownloadOptions{
 		OutputDir:  *outputDir,
+		SeriesDir:  *seriesDir,
 		OutputFile: *outputFile,
 	})
 	if err != nil {
@@ -705,7 +707,8 @@ func (a *App) runOpen(ctx context.Context, args []string) error {
 
 	urlFlag := fs.String("url", "", "Series URL to open in TUI chapter listing")
 	titleFlag := fs.String("title", "", "Optional series title")
-	outputDirFlag := fs.String("output-dir", "", "Optional output directory for downloaded chapters")
+	seriesDirFlag := fs.String("series-dir", "", "Target series directory (downloads directly inside without extra subfolder)")
+	outputDirFlag := fs.String("output-dir", "", "Optional directory for downloaded chapters")
 
 	// Separate flags from positional args
 	var flagsOnly, posArgs []string
@@ -713,7 +716,7 @@ func (a *App) runOpen(ctx context.Context, args []string) error {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			flagsOnly = append(flagsOnly, arg)
-			if (arg == "--url" || arg == "-url" || arg == "--title" || arg == "-title" || arg == "--output-dir" || arg == "-output-dir") && i+1 < len(args) {
+			if (arg == "--url" || arg == "-url" || arg == "--title" || arg == "-title" || arg == "--series-dir" || arg == "-series-dir" || arg == "--output-dir" || arg == "-output-dir") && i+1 < len(args) {
 				i++
 				flagsOnly = append(flagsOnly, args[i])
 			}
@@ -734,5 +737,10 @@ func (a *App) runOpen(ctx context.Context, args []string) error {
 		return fmt.Errorf("--url is required")
 	}
 
-	return tui.RunChapters(ctx, a.Registry, a.Downloader, *urlFlag, *titleFlag, *outputDirFlag)
+	targetDir := *seriesDirFlag
+	if targetDir == "" {
+		targetDir = *outputDirFlag
+	}
+
+	return tui.RunChapters(ctx, a.Registry, a.Downloader, *urlFlag, *titleFlag, targetDir)
 }
