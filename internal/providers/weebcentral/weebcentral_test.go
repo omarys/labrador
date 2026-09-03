@@ -20,7 +20,7 @@ func TestWeebCentral_Search_Chapters(t *testing.T) {
 			return
 		}
 
-		if r.URL.Path == "/series/01JJ1234/solo-leveling/full-chapter-list" {
+		if r.URL.Path == "/series/01JJ1234/full-chapter-list" || r.URL.Path == "/series/01JJ1234/solo-leveling/full-chapter-list" {
 			html := `
 			<div>
 				<a href="/chapters/01JJ9999/chapter-2">Chapter 2</a>

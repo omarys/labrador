@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -62,7 +64,10 @@ func (m *Model) View() string {
 
 	out := b.String()
 	if m.height > 0 {
-		out = lipgloss.NewStyle().MaxHeight(m.height).Render(out)
+		lines := strings.Split(out, "\n")
+		if len(lines) > m.height {
+			out = strings.Join(lines[:m.height], "\n")
+		}
 	}
 	return out
 }
@@ -112,6 +117,141 @@ func (m *Model) renderTabs() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, tab1, tab2) + "\n\n"
 }
 
+func (m *Model) renderTouchBar(buttons []string) string {
+	var rendered []string
+	for i, btn := range buttons {
+		if i == 0 {
+			rendered = append(rendered, touchBtnPrimaryStyle.Render(btn))
+		} else {
+			rendered = append(rendered, touchBtnStyle.Render(btn))
+		}
+	}
+	return "\n\n" + strings.Join(rendered, "  ") + "\n"
+}
+
+func (m *Model) renderSeriesDetails(item searchResultItem, width int) string {
+	if width < 25 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(draculaPurple).Render(item.Series.Title) + "\n\n")
+
+	b.WriteString(metadataLabelStyle.Render("Provider: ") + metadataValueStyle.Render(item.Provider.Name()) + "\n")
+	if item.Series.URL != "" {
+		urlStr := item.Series.URL
+		if len([]rune(urlStr)) > width-12 {
+			urlStr = string([]rune(urlStr)[:width-13]) + "…"
+		}
+		b.WriteString(metadataLabelStyle.Render("URL: ") + subtitleStyle.Render(urlStr) + "\n")
+	}
+
+	caps := item.Provider.Capabilities()
+	var capList []string
+	if caps.CanSearch {
+		capList = append(capList, "Search")
+	}
+	if caps.CanBrowse {
+		capList = append(capList, "Browse")
+	}
+	if len(capList) > 0 {
+		b.WriteString(metadataLabelStyle.Render("Features: ") + metadataValueStyle.Render(strings.Join(capList, ", ")) + "\n")
+	}
+
+	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(draculaCyan).Render("Controls") + "\n")
+	if m.selectMode {
+		b.WriteString("• Enter / Tap: Select for Dewey\n")
+		b.WriteString("• /: Edit search query\n")
+		b.WriteString("• Esc / q: Cancel\n")
+	} else {
+		b.WriteString("• Enter / Tap: Open chapters\n")
+		b.WriteString("• j / k (↑/↓): Navigate list\n")
+		b.WriteString("• g / G: Top / Bottom\n")
+		b.WriteString("• ctrl+d / u: Half-page scroll\n")
+		b.WriteString("• /: Edit search query\n")
+		b.WriteString("• Q: View download queue\n")
+	}
+
+	return paneBorderStyle.Width(width).Render(b.String())
+}
+
+func (m *Model) renderChapterDetails(width int) string {
+	if width < 25 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(draculaPurple).Render(m.activeSeries.Title) + "\n\n")
+
+	b.WriteString(metadataLabelStyle.Render("Provider: ") + metadataValueStyle.Render(m.activeProvider.Name()) + "\n")
+	b.WriteString(metadataLabelStyle.Render("Total Chapters: ") + metadataValueStyle.Render(fmt.Sprintf("%d", len(m.chapters))) + "\n")
+	b.WriteString(metadataLabelStyle.Render("Selected: ") + lipgloss.NewStyle().Foreground(draculaGreen).Bold(true).Render(fmt.Sprintf("%d", len(m.selectedChapters))) + "\n")
+
+	homeDir, _ := os.UserHomeDir()
+	dest := filepath.Join(homeDir, "Downloads", "Manga", m.activeSeries.Title)
+	if len([]rune(dest)) > width-14 {
+		dest = string([]rune(dest)[:width-15]) + "…"
+	}
+	b.WriteString(metadataLabelStyle.Render("Destination: ") + subtitleStyle.Render(dest) + "\n")
+	b.WriteString(metadataLabelStyle.Render("Archive: ") + metadataValueStyle.Render(".cbz (Store)") + "\n")
+
+	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(draculaCyan).Render("Controls") + "\n")
+	b.WriteString("• Space / Tap: Toggle selected\n")
+	b.WriteString("• a / tab: Select all / none\n")
+	b.WriteString("• d / Enter: Queue download\n")
+	b.WriteString("• j / k (↑/↓): Navigate list\n")
+	b.WriteString("• g / G: Top / Bottom\n")
+	b.WriteString("• ctrl+d / u: Half-page scroll\n")
+	b.WriteString("• Q: Open queue screen\n")
+	b.WriteString("• Esc: Back to series\n")
+
+	return paneBorderStyle.Width(width).Render(b.String())
+}
+
+func (m *Model) renderQueueDetails(visible []*QueueItem, width int) string {
+	if width < 25 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(draculaPurple).Render("Queue Summary") + "\n\n")
+
+	var nQueued, nDownloading, nDone, nFailed int
+	for _, item := range m.queue {
+		switch item.Status {
+		case StatusQueued:
+			nQueued++
+		case StatusDownloading:
+			nDownloading++
+		case StatusCompleted:
+			nDone++
+		case StatusFailed:
+			nFailed++
+		}
+	}
+
+	b.WriteString(metadataLabelStyle.Render("Total Items: ") + metadataValueStyle.Render(fmt.Sprintf("%d", len(m.queue))) + "\n")
+	b.WriteString(metadataLabelStyle.Render("Downloading: ") + statusDownloadingStyle.Render(fmt.Sprintf("%d", nDownloading)) + "\n")
+	b.WriteString(metadataLabelStyle.Render("Queued: ") + statusQueuedStyle.Render(fmt.Sprintf("%d", nQueued)) + "\n")
+	b.WriteString(metadataLabelStyle.Render("Completed: ") + statusCompletedStyle.Render(fmt.Sprintf("%d", nDone)) + "\n")
+	b.WriteString(metadataLabelStyle.Render("Failed: ") + statusFailedStyle.Render(fmt.Sprintf("%d", nFailed)) + "\n\n")
+
+	if len(visible) > 0 && m.queueCursor < len(visible) {
+		selected := visible[m.queueCursor]
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(draculaPink).Render("Selected Item") + "\n")
+		b.WriteString(metadataLabelStyle.Render("Series: ") + metadataValueStyle.Render(selected.Series.Title) + "\n")
+		b.WriteString(metadataLabelStyle.Render("Chapter: ") + metadataValueStyle.Render(selected.Chapter.Title) + "\n")
+		if selected.ErrorMessage != "" {
+			b.WriteString(statusFailedStyle.Render("Error: "+selected.ErrorMessage) + "\n")
+		}
+	}
+
+	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(draculaCyan).Render("Controls") + "\n")
+	b.WriteString("• r: Resume failed downloads\n")
+	b.WriteString("• f: Toggle hide completed\n")
+	b.WriteString("• c: Clear completed\n")
+	b.WriteString("• j/k: Navigate • Esc/Q: Back\n")
+
+	return paneBorderStyle.Width(width).Render(b.String())
+}
+
 func (m *Model) viewSearch() string {
 	var s strings.Builder
 
@@ -145,12 +285,16 @@ func (m *Model) viewSearch() string {
 		end = len(m.searchResults)
 	}
 
-	// Calculate maximum width for title truncation
-	availWidth := m.width - 4
-	if availWidth < 20 {
-		availWidth = 76
+	isDesktop := !m.IsCompact()
+	listWidth := m.width - 4
+	if isDesktop {
+		listWidth = (m.width * 54) / 100
+	}
+	if listWidth < 20 {
+		listWidth = 76
 	}
 
+	var listBuilder strings.Builder
 	for i := start; i < end; i++ {
 		item := m.searchResults[i]
 		cursor := " "
@@ -160,26 +304,37 @@ func (m *Model) viewSearch() string {
 
 		line := fmt.Sprintf("%s [%s] %s", cursor, item.Provider.Name(), item.Series.Title)
 		runes := []rune(line)
-		if len(runes) > availWidth && availWidth > 1 {
-			line = string(runes[:availWidth-1]) + "…"
+		if len(runes) > listWidth && listWidth > 1 {
+			line = string(runes[:listWidth-1]) + "…"
 		}
 
 		if i == m.searchCursor {
-			s.WriteString(selectedItemStyle.Render(line) + "\n")
+			listBuilder.WriteString(selectedItemStyle.Render(line) + "\n")
 		} else {
-			s.WriteString(normalItemStyle.Render(line) + "\n")
+			listBuilder.WriteString(normalItemStyle.Render(line) + "\n")
 		}
 	}
 
 	if len(m.searchResults) > maxVisible {
-		s.WriteString(subtitleStyle.Render(fmt.Sprintf("Showing %d-%d of %d series", start+1, end, len(m.searchResults))))
-		s.WriteByte('\n')
+		listBuilder.WriteString(subtitleStyle.Render(fmt.Sprintf("Showing %d-%d of %d series", start+1, end, len(m.searchResults))))
+		listBuilder.WriteByte('\n')
 	}
 
-	if m.selectMode {
-		s.WriteString(subtitleStyle.Render("j/k: navigate • Enter: select series for Dewey • /: edit query • Esc/q: cancel"))
+	if isDesktop {
+		rightWidth := m.width - listWidth - 5
+		var rightPane string
+		if m.searchCursor < len(m.searchResults) {
+			rightPane = m.renderSeriesDetails(m.searchResults[m.searchCursor], rightWidth)
+		}
+		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listBuilder.String(), "  ", rightPane))
+		s.WriteString("\n\n" + subtitleStyle.Render("j/k: navigate • g/G: top/bottom • ctrl+d/u: half-page • Enter: open • /: search • Q: queue • Esc: back"))
 	} else {
-		s.WriteString(subtitleStyle.Render("Tab: Browse catalog • /: Search • Enter: Open • Q: Queue • Esc: Back"))
+		s.WriteString(listBuilder.String())
+		if m.selectMode {
+			s.WriteString(m.renderTouchBar([]string{"[ ⏎ Select ]", "[ 🔍 Search ]", "[ ✖ Cancel ]"}))
+		} else {
+			s.WriteString(m.renderTouchBar([]string{"[ ⏎ Open ]", "[ 🔍 Search ]", "[ 📋 Queue ]", "[ ✖ Back ]"}))
+		}
 	}
 	return s.String()
 }
@@ -265,6 +420,16 @@ func (m *Model) viewChapters() string {
 		end = len(m.chapters)
 	}
 
+	isDesktop := !m.IsCompact()
+	listWidth := m.width - 4
+	if isDesktop {
+		listWidth = (m.width * 54) / 100
+	}
+	if listWidth < 20 {
+		listWidth = 76
+	}
+
+	var listBuilder strings.Builder
 	for i := start; i < end; i++ {
 		ch := m.chapters[i]
 		cursor := " "
@@ -279,17 +444,33 @@ func (m *Model) viewChapters() string {
 		}
 
 		line := fmt.Sprintf("%s %s %s", cursor, checked, ch.Title)
+		runes := []rune(line)
+		if len(runes) > listWidth && listWidth > 1 {
+			line = string(runes[:listWidth-1]) + "…"
+		}
+
 		if i == m.chapterCursor {
-			s.WriteString(selectedItemStyle.Render(line) + "\n")
+			listBuilder.WriteString(selectedItemStyle.Render(line) + "\n")
 		} else {
-			s.WriteString(normalItemStyle.Render(line) + "\n")
+			listBuilder.WriteString(normalItemStyle.Render(line) + "\n")
 		}
 	}
 
-	s.WriteByte('\n')
-	s.WriteString(subtitleStyle.Render(fmt.Sprintf("Showing %d-%d of %d chapters", start+1, end, len(m.chapters))))
-	s.WriteByte('\n')
-	s.WriteString(subtitleStyle.Render("Space: toggle • a/tab: select all/none • d/enter: queue download • Q: view queue • esc: back"))
+	if len(m.chapters) > maxVisible {
+		listBuilder.WriteByte('\n')
+		listBuilder.WriteString(subtitleStyle.Render(fmt.Sprintf("Showing %d-%d of %d chapters", start+1, end, len(m.chapters))))
+		listBuilder.WriteByte('\n')
+	}
+
+	if isDesktop {
+		rightWidth := m.width - listWidth - 5
+		rightPane := m.renderChapterDetails(rightWidth)
+		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listBuilder.String(), "  ", rightPane))
+		s.WriteString("\n\n" + subtitleStyle.Render("Space: toggle • a: select all/none • d/Enter: download • j/k: navigate • Q: queue • Esc: back"))
+	} else {
+		s.WriteString(listBuilder.String())
+		s.WriteString(m.renderTouchBar([]string{"[ ␣ Toggle ]", "[ ✓ All ]", "[ 📥 Download ]", "[ 📋 Queue ]", "[ ✖ Back ]"}))
+	}
 	return s.String()
 }
 
@@ -410,9 +591,19 @@ func (m *Model) viewQueue() string {
 		})
 	}
 
+	isDesktop := !m.IsCompact()
+	listWidth := m.width - 4
+	if isDesktop {
+		listWidth = (m.width * 56) / 100
+	}
+	if listWidth < 20 {
+		listWidth = 76
+	}
+
+	var listBuilder strings.Builder
 	for _, g := range groups {
 		header := fmt.Sprintf("📚 %s (%s)", g.series.Title, g.provider.Name())
-		s.WriteString(seriesHeaderStyle.Render(header) + "\n")
+		listBuilder.WriteString(seriesHeaderStyle.Render(header) + "\n")
 
 		for _, entry := range g.items {
 			cursor := "  "
@@ -436,19 +627,34 @@ func (m *Model) viewQueue() string {
 			if entry.item.ErrorMessage != "" {
 				line += fmt.Sprintf(" - %s", statusFailedStyle.Render(entry.item.ErrorMessage))
 			}
+			runes := []rune(line)
+			if len(runes) > listWidth && listWidth > 1 {
+				line = string(runes[:listWidth-1]) + "…"
+			}
 
 			if entry.indexInVisible == m.queueCursor {
-				s.WriteString(selectedItemStyle.Render(line) + "\n")
+				listBuilder.WriteString(selectedItemStyle.Render(line) + "\n")
 			} else {
-				s.WriteString(normalItemStyle.Render(line) + "\n")
+				listBuilder.WriteString(normalItemStyle.Render(line) + "\n")
 			}
 		}
 	}
 
-	s.WriteByte('\n')
-	s.WriteString(subtitleStyle.Render(fmt.Sprintf("Showing %d-%d of %d items (%d total in queue)", start+1, end, len(visible), len(m.queue))))
-	s.WriteByte('\n')
-	s.WriteString(subtitleStyle.Render("j/k: navigate • g/G: top/bottom • r: resume • f: filter • c: clear • esc/Q: back"))
+	if len(visible) > maxVisible {
+		listBuilder.WriteByte('\n')
+		listBuilder.WriteString(subtitleStyle.Render(fmt.Sprintf("Showing %d-%d of %d items (%d total in queue)", start+1, end, len(visible), len(m.queue))))
+		listBuilder.WriteByte('\n')
+	}
+
+	if isDesktop {
+		rightWidth := m.width - listWidth - 5
+		rightPane := m.renderQueueDetails(visible, rightWidth)
+		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listBuilder.String(), "  ", rightPane))
+		s.WriteString("\n\n" + subtitleStyle.Render("j/k: navigate • g/G: top/bottom • ctrl+d/u: half-page • r: resume • f: filter • c: clear • Esc/Q: back"))
+	} else {
+		s.WriteString(listBuilder.String())
+		s.WriteString(m.renderTouchBar([]string{"[ 🔄 Resume ]", "[ 👁 Filter ]", "[ 🧹 Clear ]", "[ ✖ Back ]"}))
+	}
 	return s.String()
 }
 

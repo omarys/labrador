@@ -16,7 +16,7 @@ func Run(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downl
 	m := NewModel(reg, dl, ctx, cancel)
 	m.LoadPersistedQueue()
 
-	p := tea.NewProgram(&m, tea.WithAltScreen())
+	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 	if fm, ok := finalModel.(*Model); ok {
 		_ = fm.DumpQueue()
@@ -31,7 +31,7 @@ func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader
 	defer cancel()
 
 	m := NewSelectModel(reg, dl, ctx, cancel, query)
-	p := tea.NewProgram(&m, tea.WithAltScreen())
+	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 	if err != nil {
 		return "", err

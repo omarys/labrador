@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -107,8 +108,11 @@ func (p *Provider) fetchSeries(ctx context.Context, reqURL string) ([]domain.Ser
 		}
 
 		seriesURL := p.resolveURL(href)
-		parts := strings.Split(strings.TrimRight(seriesURL, "/"), "/")
-		seriesID := parts[len(parts)-1]
+		seriesID := extractSeriesID(seriesURL)
+		if seriesID == "" {
+			parts := strings.Split(strings.TrimRight(seriesURL, "/"), "/")
+			seriesID = parts[len(parts)-1]
+		}
 
 		results = append(results, domain.Series{
 			ID:    seriesID,
@@ -118,6 +122,19 @@ func (p *Provider) fetchSeries(ctx context.Context, reqURL string) ([]domain.Ser
 	})
 
 	return results, nil
+}
+
+func extractSeriesID(rawURL string) string {
+	parts := strings.Split(strings.TrimRight(rawURL, "/"), "/")
+	for i, part := range parts {
+		if part == "series" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return ""
 }
 
 func cleanSeriesTitle(s *goquery.Selection) string {
@@ -148,11 +165,11 @@ func (p *Provider) GetTags(_ context.Context) ([]domain.Tag, error) {
 }
 
 func (p *Provider) GetChapters(ctx context.Context, series domain.Series) ([]domain.Chapter, error) {
-	// WeebCentral series pages link to chapters directly or via /full-chapter-list
-	reqURL := series.URL
-	if !strings.HasSuffix(reqURL, "/full-chapter-list") {
-		reqURL = strings.TrimRight(reqURL, "/") + "/full-chapter-list"
+	seriesID := extractSeriesID(series.URL)
+	if seriesID == "" {
+		seriesID = series.ID
 	}
+	reqURL := fmt.Sprintf("%s/series/%s/full-chapter-list", p.baseURL, seriesID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -160,12 +177,24 @@ func (p *Provider) GetChapters(ctx context.Context, series domain.Series) ([]dom
 	}
 
 	resp, err := p.client.Do(req)
-	if err != nil {
-		// Fallback to series URL directly if full-chapter-list endpoint 404s
-		req, _ = http.NewRequestWithContext(ctx, http.MethodGet, series.URL, nil)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		// Fallback 1: series.URL + /full-chapter-list (mock tests and legacy routes)
+		altURL := strings.TrimRight(series.URL, "/") + "/full-chapter-list"
+		req, _ = http.NewRequestWithContext(ctx, http.MethodGet, altURL, nil)
 		resp, err = p.client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("executing request: %w", err)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			// Fallback 2: series URL directly if full-chapter-list endpoint fails
+			req, _ = http.NewRequestWithContext(ctx, http.MethodGet, series.URL, nil)
+			resp, err = p.client.Do(req)
+			if err != nil {
+				return nil, fmt.Errorf("executing request: %w", err)
+			}
 		}
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -190,11 +219,34 @@ func (p *Provider) GetChapters(ctx context.Context, series domain.Series) ([]dom
 		}
 		seen[chapterURL] = true
 
-		title := strings.Join(strings.Fields(s.Text()), " ")
+		clone := s.Clone()
+		clone.Find("time, svg, img, [class*='badge'], [class*='link-info']").Remove()
+
+		var title string
+		if span := clone.Find("span.grow > span:first-child").First(); span.Length() > 0 {
+			title = strings.TrimSpace(span.Text())
+		}
+		if title == "" {
+			if span := clone.Find("span.grow").First(); span.Length() > 0 {
+				title = strings.TrimSpace(span.Text())
+			}
+		}
+		if title == "" {
+			title = strings.Join(strings.Fields(clone.Text()), " ")
+		}
 		if title == "" {
 			title = fmt.Sprintf("Chapter %d", index+1)
 		}
 		chapterID := filepath.Base(chapterURL)
+
+		var numVal *float64
+		// Extract chapter number
+		for _, field := range strings.Fields(title) {
+			if n, err := strconv.ParseFloat(strings.Trim(field, "#:."), 64); err == nil {
+				numVal = &n
+				break
+			}
+		}
 
 		chapters = append(chapters, domain.Chapter{
 			ID:            chapterID,
@@ -203,6 +255,7 @@ func (p *Provider) GetChapters(ctx context.Context, series domain.Series) ([]dom
 			URL:           chapterURL,
 			OriginalLabel: title,
 			Index:         index,
+			Number:        numVal,
 		})
 		index++
 	})

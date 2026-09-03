@@ -9,6 +9,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -211,10 +213,31 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 	} else if *seriesFlag != "" {
 		// Resolve series across registered providers (Dewey headless flow)
 		_, _ = fmt.Fprintf(a.Stderr, "Searching providers for series: %s\n", *seriesFlag)
-		for _, p := range a.Registry.List() {
-			if !p.Capabilities().CanSearch {
-				continue
+
+		// Prioritize preferred providers first
+		preferredOrder := []string{"weebcentral", "mangakatana", "mangadistrict", "private_gallery"}
+		allProviders := a.Registry.List()
+		var sortedProviders []provider.Provider
+		for _, id := range preferredOrder {
+			if p, ok := a.Registry.Get(id); ok && p.Capabilities().CanSearch {
+				sortedProviders = append(sortedProviders, p)
 			}
+		}
+		for _, p := range allProviders {
+			if !slices.Contains(preferredOrder, p.ID()) && p.Capabilities().CanSearch {
+				sortedProviders = append(sortedProviders, p)
+			}
+		}
+
+		targetNum, hasNum := 0.0, false
+		if *chapterFlag != "" {
+			if n, err := strconv.ParseFloat(*chapterFlag, 64); err == nil {
+				targetNum = n
+				hasNum = true
+			}
+		}
+
+		for _, p := range sortedProviders {
 			res, err := p.Search(ctx, *seriesFlag)
 			if err != nil || len(res) == 0 {
 				continue
@@ -223,13 +246,29 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 			// Find best match in provider's search results
 			for _, s := range res {
 				chaps, err := p.GetChapters(ctx, s)
-				if err == nil && len(chaps) > 0 {
-					prov = p
-					series = s
-					chapters = chaps
-					_, _ = fmt.Fprintf(a.Stderr, "Resolved series '%s' on provider %s\n", s.Title, p.Name())
-					break
+				if err != nil || len(chaps) == 0 {
+					continue
 				}
+
+				// If a specific chapter was requested, make sure this provider actually has it!
+				if *chapterFlag != "" {
+					hasTarget := false
+					for _, ch := range chaps {
+						if matchChapter(ch, *chapterFlag, targetNum, hasNum) {
+							hasTarget = true
+							break
+						}
+					}
+					if !hasTarget {
+						continue // Provider is missing requested chapter; try next
+					}
+				}
+
+				prov = p
+				series = s
+				chapters = chaps
+				_, _ = fmt.Fprintf(a.Stderr, "Resolved series '%s' on provider %s\n", s.Title, p.Name())
+				break
 			}
 			if prov != nil {
 				break
@@ -250,12 +289,9 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 	var targetChapter *domain.Chapter
 	if *chapterFlag != "" {
 		targetNum, parseErr := strconv.ParseFloat(*chapterFlag, 64)
+		hasNum := parseErr == nil
 		for _, ch := range chapters {
-			if parseErr == nil && ch.Number != nil && math.Abs(*ch.Number-targetNum) < 0.001 {
-				targetChapter = &ch
-				break
-			}
-			if strings.EqualFold(ch.Title, *chapterFlag) || strings.Contains(strings.ToLower(ch.Title), strings.ToLower(*chapterFlag)) {
+			if matchChapter(ch, *chapterFlag, targetNum, hasNum) {
 				targetChapter = &ch
 				break
 			}
@@ -501,4 +537,25 @@ func (a *App) runSelect(ctx context.Context, args []string) error {
 
 	_, _ = fmt.Fprintln(a.Stdout, chosenURL)
 	return nil
+}
+
+var chapterNumberRe = regexp.MustCompile(`(?i)(?:chapter|ch\.?|ep\.?|episode)?\s*([0-9]+(?:\.[0-9]+)?)`)
+
+func matchChapter(ch domain.Chapter, targetStr string, targetNum float64, hasNum bool) bool {
+	if hasNum && ch.Number != nil && math.Abs(*ch.Number-targetNum) < 0.001 {
+		return true
+	}
+	if hasNum {
+		matches := chapterNumberRe.FindStringSubmatch(ch.Title)
+		if len(matches) > 1 {
+			if n, err := strconv.ParseFloat(matches[1], 64); err == nil && math.Abs(n-targetNum) < 0.001 {
+				return true
+			}
+		}
+	}
+	if strings.EqualFold(ch.Title, targetStr) {
+		return true
+	}
+	targetTrimmed := strings.TrimSuffix(targetStr, ".0")
+	return strings.EqualFold(ch.Title, targetTrimmed)
 }

@@ -29,6 +29,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -124,7 +127,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.DumpQueue()
 			return m, tea.Quit
 
-		case "Q", "ctrl+d":
+		case "Q":
 			// Toggle into/out of Download Queue screen
 			if m.screen != screenQueue {
 				m.previousScreen = m.screen
@@ -273,7 +276,7 @@ func (m *Model) updateSearchBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.isLoading = true
 				return m, m.performSearchCmd(query)
 			}
-		case "down", "ctrl+n":
+		case "down", "ctrl+n", "j":
 			m.textInput.Blur()
 			if len(m.searchResults) > 0 {
 				m.searchCursor = 0
@@ -342,9 +345,25 @@ func (m *Model) updateSearchBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "K", "up", "ctrl+p":
 		if m.searchCursor > 0 {
 			m.searchCursor--
-		} else if !m.selectMode {
-			m.textInput.Focus()
 		}
+	case "g", "home":
+		m.searchCursor = 0
+	case "G", "end":
+		if len(m.searchResults) > 0 {
+			m.searchCursor = len(m.searchResults) - 1
+		}
+	case "ctrl+d":
+		if len(m.searchResults) > 0 {
+			m.searchCursor = min(m.searchCursor+8, len(m.searchResults)-1)
+		}
+	case "ctrl+u":
+		m.searchCursor = max(0, m.searchCursor-8)
+	case "ctrl+f", "pgdown":
+		if len(m.searchResults) > 0 {
+			m.searchCursor = min(m.searchCursor+14, len(m.searchResults)-1)
+		}
+	case "ctrl+b", "pgup":
+		m.searchCursor = max(0, m.searchCursor-14)
 	case "enter":
 		if len(m.searchResults) > 0 {
 			selected := m.searchResults[m.searchCursor]
@@ -378,6 +397,24 @@ func (m *Model) updateChapters(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.chapterCursor > 0 {
 			m.chapterCursor--
 		}
+	case "g", "home":
+		m.chapterCursor = 0
+	case "G", "end":
+		if len(m.chapters) > 0 {
+			m.chapterCursor = len(m.chapters) - 1
+		}
+	case "ctrl+d":
+		if len(m.chapters) > 0 {
+			m.chapterCursor = min(m.chapterCursor+8, len(m.chapters)-1)
+		}
+	case "ctrl+u":
+		m.chapterCursor = max(0, m.chapterCursor-8)
+	case "ctrl+f", "pgdown":
+		if len(m.chapters) > 0 {
+			m.chapterCursor = min(m.chapterCursor+14, len(m.chapters)-1)
+		}
+	case "ctrl+b", "pgup":
+		m.chapterCursor = max(0, m.chapterCursor-14)
 	case " ":
 		// Toggle chapter selection for batch download
 		if len(m.chapters) > 0 {
@@ -395,38 +432,7 @@ func (m *Model) updateChapters(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "d", "enter":
-		// Queue selected chapters (or current chapter if none selected)
-		var toQueue []domain.Chapter
-		for _, ch := range m.chapters {
-			if m.selectedChapters[chapterKey(ch)] {
-				toQueue = append(toQueue, ch)
-			}
-		}
-		if len(toQueue) == 0 && len(m.chapters) > 0 {
-			toQueue = append(toQueue, m.chapters[m.chapterCursor])
-		}
-
-		if len(toQueue) > 0 {
-			for _, ch := range toQueue {
-				chKey := chapterKey(ch)
-				m.queue = append(m.queue, &QueueItem{
-					ID:       fmt.Sprintf("%s:%s:%s", m.activeProvider.ID(), m.activeSeries.ID, chKey),
-					Provider: m.activeProvider,
-					Series:   m.activeSeries,
-					Chapter:  ch,
-					Status:   StatusQueued,
-					AddedAt:  time.Now(),
-				})
-			}
-			m.statusMsg = fmt.Sprintf("Added %d chapter(s) to queue (press 'Q' to view)", len(toQueue))
-			m.selectedChapters = make(map[string]bool)
-
-			if !m.isDownloading {
-				nextM, nextCmd := m.startNextDownload()
-				return nextM, tea.Batch(dumpQueueAsyncCmd(m.queue), nextCmd)
-			}
-			return m, dumpQueueAsyncCmd(m.queue)
-		}
+		return m.queueSelectedChapters()
 	}
 	return m, nil
 }
@@ -449,6 +455,18 @@ func (m *Model) updateQueue(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(visible) > 0 {
 			m.queueCursor = len(visible) - 1
 		}
+	case "ctrl+d":
+		if len(visible) > 0 {
+			m.queueCursor = min(m.queueCursor+8, len(visible)-1)
+		}
+	case "ctrl+u":
+		m.queueCursor = max(0, m.queueCursor-8)
+	case "ctrl+f", "pgdown":
+		if len(visible) > 0 {
+			m.queueCursor = min(m.queueCursor+14, len(visible)-1)
+		}
+	case "ctrl+b", "pgup":
+		m.queueCursor = max(0, m.queueCursor-14)
 	case "f":
 		m.hideCompleted = !m.hideCompleted
 		if m.queueCursor >= len(m.filteredQueue()) {

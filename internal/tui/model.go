@@ -128,6 +128,16 @@ type Model struct {
 
 	// In-memory chapter cache (providerID:seriesID -> chapters)
 	chapterCache map[string][]domain.Chapter
+
+	// Touch / click tracking
+	lastClickTime time.Time
+	lastClickRow  int
+}
+
+// IsCompact returns true when terminal width is < 100 or portrait aspect ratio,
+// indicating tablet/mobile/narrow viewing mode.
+func (m *Model) IsCompact() bool {
+	return m.width < 100 || (m.height > 0 && m.height > m.width)
 }
 
 func NewModel(reg *provider.Registry, dl *downloader.Downloader, ctx context.Context, cancel context.CancelFunc) Model {
