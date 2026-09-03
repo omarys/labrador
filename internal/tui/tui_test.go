@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -96,4 +97,79 @@ func TestTUI_QueueNavigationAndPersistence(t *testing.T) {
 	mod = updated.(*tui.Model)
 
 	_, _ = mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+}
+
+func TestTUI_SearchVimMode(t *testing.T) {
+	reg := provider.NewRegistry()
+	_ = reg.Register(&dummyProv{})
+
+	dl := downloader.New(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	m := tui.NewModel(reg, dl, ctx, cancel)
+
+	// 1. Enter provider screen -> enter search screen
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mod := updated.(*tui.Model)
+
+	// In search screen, starts in Normal mode
+	viewNormal := mod.View()
+	if !strings.Contains(viewNormal, "[NORMAL]") {
+		t.Errorf("expected [NORMAL] mode indicator in view, got: %s", viewNormal)
+	}
+
+	// 2. Press 'i' to enter Insert mode
+	updated, _ = mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	mod = updated.(*tui.Model)
+
+	viewInsert := mod.View()
+	if !strings.Contains(viewInsert, "[INSERT]") {
+		t.Errorf("expected [INSERT] mode indicator in view, got: %s", viewInsert)
+	}
+
+	// 3. Type letters including 'j', 'Q', 'q' in Insert mode -> they should not trigger shortcuts
+	for _, r := range []rune{'j', 'u', 'j', 'u', 't', 's', 'u', 'Q', 'q'} {
+		updated, _ = mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		mod = updated.(*tui.Model)
+	}
+
+	viewWithQuery := mod.View()
+	if !strings.Contains(viewWithQuery, "jujutsuQq") {
+		t.Errorf("expected query text to contain 'jujutsuQq', got: %s", viewWithQuery)
+	}
+
+	// 4. Press 'Esc' to exit Insert mode back to Normal mode
+	updated, _ = mod.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mod = updated.(*tui.Model)
+
+	viewBackToNormal := mod.View()
+	if !strings.Contains(viewBackToNormal, "[NORMAL]") {
+		t.Errorf("expected [NORMAL] mode after Esc, got: %s", viewBackToNormal)
+	}
+
+	// 5. Press 'I' (capital I) -> clears query and enters Insert mode
+	updated, _ = mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'I'}})
+	mod = updated.(*tui.Model)
+
+	viewClearedInsert := mod.View()
+	if !strings.Contains(viewClearedInsert, "[INSERT]") {
+		t.Errorf("expected [INSERT] mode after capital I, got: %s", viewClearedInsert)
+	}
+	if strings.Contains(viewClearedInsert, "jujutsuQq") {
+		t.Errorf("expected previous query to be cleared, but found it in view: %s", viewClearedInsert)
+	}
+
+	// 6. Press 'Esc' to exit Insert mode
+	updated, _ = mod.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mod = updated.(*tui.Model)
+
+	// 7. Additional 'Esc' returns to provider select screen
+	updated, _ = mod.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mod = updated.(*tui.Model)
+
+	viewProviders := mod.View()
+	if !strings.Contains(viewProviders, "Select provider(s)") {
+		t.Errorf("expected provider selection screen after second Esc, got: %s", viewProviders)
+	}
 }

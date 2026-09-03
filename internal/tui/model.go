@@ -131,6 +131,10 @@ type Model struct {
 	// In-memory chapter cache (providerID:seriesID -> chapters)
 	chapterCache map[string][]domain.Chapter
 
+	// Output directory for downloaded chapters
+	outputDir          string
+	directChaptersMode bool
+
 	// Touch / click tracking
 	lastClickTime time.Time
 	lastClickRow  int
@@ -149,7 +153,7 @@ func NewModel(reg *provider.Registry, dl *downloader.Downloader, ctx context.Con
 
 	ti := textinput.New()
 	ti.Placeholder = "Type series title to search..."
-	ti.Focus()
+	ti.Blur()
 
 	providers := reg.All()
 
@@ -239,6 +243,9 @@ func (m *Model) Init() tea.Cmd {
 	}
 	if m.selectMode && m.textInput.Value() != "" {
 		cmds = append(cmds, m.performSearchCmd(m.textInput.Value()))
+	}
+	if m.screen == screenChapters && m.activeProvider != nil {
+		cmds = append(cmds, m.fetchChaptersCmd(m.activeProvider, m.activeSeries))
 	}
 	return tea.Batch(cmds...)
 }

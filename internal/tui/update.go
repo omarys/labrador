@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/omarys/labrador/internal/domain"
 	"github.com/omarys/labrador/internal/downloader"
 	"github.com/omarys/labrador/internal/provider"
+	"strings"
 )
 
 func (m *Model) filteredQueue() []*QueueItem {
@@ -128,15 +130,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "Q":
-			// Toggle into/out of Download Queue screen
-			if m.screen != screenQueue {
-				m.previousScreen = m.screen
-				m.screen = screenQueue
-				m.queueCursor = 0
-			} else {
-				m.screen = m.previousScreen
+			if !m.textInput.Focused() {
+				// Toggle into/out of Download Queue screen
+				if m.screen != screenQueue {
+					m.previousScreen = m.screen
+					m.screen = screenQueue
+					m.queueCursor = 0
+				} else {
+					m.screen = m.previousScreen
+				}
+				return m, nil
 			}
-			return m, nil
 
 		case "q":
 			if !m.textInput.Focused() {
@@ -196,6 +200,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleBack() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case screenChapters:
+		if m.directChaptersMode {
+			return m, tea.Quit
+		}
 		if m.activeTab == tabBrowse {
 			m.screen = screenBrowse
 		} else {
@@ -243,7 +250,7 @@ func (m *Model) updateProviders(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Multi-provider: go directly to unified search
 			m.activeProvider = nil
 			m.screen = screenSearch
-			m.textInput.Focus()
+			m.textInput.Blur()
 			return m, nil
 		}
 
@@ -251,39 +258,26 @@ func (m *Model) updateProviders(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.activeProvider = m.providers[m.providerCursor]
 		m.screen = screenSearch
 		m.activeTab = tabSearch
-		m.textInput.Focus()
+		m.textInput.Blur()
 		return m, nil
 	}
 	return m, nil
 }
 
 func (m *Model) updateSearchBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// If search input is focused:
+	// If search input is focused (INSERT MODE):
 	if m.textInput.Focused() {
 		switch msg.String() {
-		case "tab":
-			if m.activeProvider != nil && m.activeProvider.Capabilities().CanBrowse {
-				m.textInput.Blur()
-				m.activeTab = tabBrowse
-				m.screen = screenBrowse
-				m.isLoading = true
-				return m, m.performBrowseCmd()
-			}
+		case "esc":
+			m.textInput.Blur()
+			return m, nil
 		case "enter":
-			query := m.textInput.Value()
+			query := strings.TrimSpace(m.textInput.Value())
+			m.textInput.Blur()
 			if query != "" {
-				m.textInput.Blur()
 				m.isLoading = true
 				return m, m.performSearchCmd(query)
 			}
-		case "down", "ctrl+n", "j":
-			m.textInput.Blur()
-			if len(m.searchResults) > 0 {
-				m.searchCursor = 0
-			}
-			return m, nil
-		case "esc":
-			m.textInput.Blur()
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -291,7 +285,27 @@ func (m *Model) updateSearchBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// NORMAL NAVIGATION MODE:
 	switch msg.String() {
+	case "i":
+		m.activeTab = tabSearch
+		m.screen = screenSearch
+		m.textInput.Focus()
+		return m, textinput.Blink
+
+	case "I":
+		m.activeTab = tabSearch
+		m.screen = screenSearch
+		m.textInput.SetValue("")
+		m.textInput.Focus()
+		return m, textinput.Blink
+
+	case "/":
+		m.activeTab = tabSearch
+		m.screen = screenSearch
+		m.textInput.Focus()
+		return m, textinput.Blink
+
 	case "tab":
 		if m.activeProvider != nil && m.activeProvider.Capabilities().CanBrowse {
 			if m.activeTab == tabSearch {
@@ -302,21 +316,13 @@ func (m *Model) updateSearchBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.activeTab = tabSearch
 			m.screen = screenSearch
-			m.textInput.Focus()
 			return m, nil
 		}
-
-	case "/":
-		m.activeTab = tabSearch
-		m.screen = screenSearch
-		m.textInput.Focus()
-		return m, nil
 
 	case "h", "left", "1":
 		if m.activeProvider != nil && m.activeTab == tabBrowse {
 			m.activeTab = tabSearch
 			m.screen = screenSearch
-			m.textInput.Focus()
 			return m, nil
 		}
 	case "l", "right", "2":
@@ -518,7 +524,9 @@ func (m *Model) startNextDownload() (tea.Model, tea.Cmd) {
 					targetItem.Provider,
 					targetItem.Series,
 					targetItem.Chapter,
-					downloader.DownloadOptions{},
+					downloader.DownloadOptions{
+						OutputDir: m.outputDir,
+					},
 				)
 				return queueDownloadFinishedMsg{
 					itemID: targetItem.ID,

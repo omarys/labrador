@@ -60,6 +60,10 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runResume(ctx, subArgs)
 	case "select":
 		return a.runSelect(ctx, subArgs)
+	case "chapters":
+		return a.runChapters(ctx, subArgs)
+	case "open":
+		return a.runOpen(ctx, subArgs)
 	case "help", "-h", "--help":
 		return a.printUsage()
 	default:
@@ -85,6 +89,12 @@ Commands:
 
   providers [--json]
       List all available providers and their capabilities.
+
+  chapters --url <series_url> [--json]
+      List all available remote chapters for a series URL.
+
+  open --url <series_url> [--title <title>] [--output-dir <path>]
+      Open a series directly into Labrador's interactive TUI chapter listing.
   `
 	_, _ = fmt.Fprint(a.Stdout, usage)
 	return nil
@@ -563,4 +573,166 @@ func matchChapter(ch domain.Chapter, targetStr string, targetNum float64, hasNum
 	}
 	targetTrimmed := strings.TrimSuffix(targetStr, ".0")
 	return strings.EqualFold(ch.Title, targetTrimmed)
+}
+
+type chapterResultJSON struct {
+	ID            string   `json:"id"`
+	SeriesID      string   `json:"series_id,omitempty"`
+	Title         string   `json:"title"`
+	URL           string   `json:"url"`
+	Number        *float64 `json:"number,omitempty"`
+	Index         int      `json:"index"`
+	OriginalLabel string   `json:"original_label,omitempty"`
+}
+
+func (a *App) runChapters(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("chapters", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+
+	urlFlag := fs.String("url", "", "Series URL to fetch chapters for")
+	seriesFlag := fs.String("series", "", "Series title to search and fetch chapters for")
+	jsonOutput := fs.Bool("json", false, "Output results as JSON")
+
+	// Separate flags from positional args if any
+	var flagsOnly, posArgs []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flagsOnly = append(flagsOnly, arg)
+			if (arg == "--url" || arg == "-url" || arg == "--series" || arg == "-series") && i+1 < len(args) {
+				i++
+				flagsOnly = append(flagsOnly, args[i])
+			}
+		} else {
+			posArgs = append(posArgs, arg)
+		}
+	}
+
+	if err := fs.Parse(flagsOnly); err != nil {
+		return err
+	}
+
+	if *urlFlag == "" && len(posArgs) > 0 && strings.HasPrefix(posArgs[0], "http") {
+		*urlFlag = posArgs[0]
+	}
+
+	if *urlFlag == "" && *seriesFlag == "" && len(posArgs) > 0 {
+		*seriesFlag = strings.Join(posArgs, " ")
+	}
+
+	if *urlFlag == "" && *seriesFlag == "" {
+		return fmt.Errorf("either --url or --series is required")
+	}
+
+	var prov provider.Provider
+	var series domain.Series
+
+	if *urlFlag != "" {
+		p, ok := a.Registry.FindByURL(*urlFlag)
+		if !ok {
+			return fmt.Errorf("no registered provider matches URL: %s", *urlFlag)
+		}
+		prov = p
+		series = domain.Series{URL: *urlFlag}
+		if *seriesFlag != "" {
+			series.Title = *seriesFlag
+		}
+	} else {
+		preferredOrder := []string{"weebcentral", "mangakatana", "mangadistrict", "private_gallery"}
+		allProviders := a.Registry.List()
+		var sortedProviders []provider.Provider
+		for _, id := range preferredOrder {
+			if p, ok := a.Registry.Get(id); ok && p.Capabilities().CanSearch {
+				sortedProviders = append(sortedProviders, p)
+			}
+		}
+		for _, p := range allProviders {
+			if !slices.Contains(preferredOrder, p.ID()) && p.Capabilities().CanSearch {
+				sortedProviders = append(sortedProviders, p)
+			}
+		}
+
+		for _, p := range sortedProviders {
+			res, err := p.Search(ctx, *seriesFlag)
+			if err != nil || len(res) == 0 {
+				continue
+			}
+			prov = p
+			series = res[0]
+			break
+		}
+		if prov == nil {
+			return fmt.Errorf("no series found matching: %s", *seriesFlag)
+		}
+	}
+
+	chapters, err := prov.GetChapters(ctx, series)
+	if err != nil {
+		return fmt.Errorf("fetching chapters: %w", err)
+	}
+
+	if *jsonOutput {
+		var out []chapterResultJSON
+		for _, ch := range chapters {
+			out = append(out, chapterResultJSON{
+				ID:            ch.ID,
+				SeriesID:      ch.SeriesID,
+				Title:         ch.Title,
+				URL:           ch.URL,
+				Number:        ch.Number,
+				Index:         ch.Index,
+				OriginalLabel: ch.OriginalLabel,
+			})
+		}
+		enc := json.NewEncoder(a.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+
+	for _, ch := range chapters {
+		numStr := ""
+		if ch.Number != nil {
+			numStr = fmt.Sprintf("Ch. %.1f - ", *ch.Number)
+		}
+		_, _ = fmt.Fprintf(a.Stdout, "%s%s (%s)\n", numStr, ch.Title, ch.URL)
+	}
+	return nil
+}
+
+func (a *App) runOpen(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("open", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+
+	urlFlag := fs.String("url", "", "Series URL to open in TUI chapter listing")
+	titleFlag := fs.String("title", "", "Optional series title")
+	outputDirFlag := fs.String("output-dir", "", "Optional output directory for downloaded chapters")
+
+	// Separate flags from positional args
+	var flagsOnly, posArgs []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flagsOnly = append(flagsOnly, arg)
+			if (arg == "--url" || arg == "-url" || arg == "--title" || arg == "-title" || arg == "--output-dir" || arg == "-output-dir") && i+1 < len(args) {
+				i++
+				flagsOnly = append(flagsOnly, args[i])
+			}
+		} else {
+			posArgs = append(posArgs, arg)
+		}
+	}
+
+	if err := fs.Parse(flagsOnly); err != nil {
+		return err
+	}
+
+	if *urlFlag == "" && len(posArgs) > 0 && strings.HasPrefix(posArgs[0], "http") {
+		*urlFlag = posArgs[0]
+	}
+
+	if *urlFlag == "" {
+		return fmt.Errorf("--url is required")
+	}
+
+	return tui.RunChapters(ctx, a.Registry, a.Downloader, *urlFlag, *titleFlag, *outputDirFlag)
 }

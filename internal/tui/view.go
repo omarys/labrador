@@ -160,14 +160,15 @@ func (m *Model) renderSeriesDetails(item searchResultItem, width int) string {
 	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(draculaCyan).Render("Controls") + "\n")
 	if m.selectMode {
 		b.WriteString("• Enter / Tap: Select for Dewey\n")
-		b.WriteString("• /: Edit search query\n")
-		b.WriteString("• Esc / q: Cancel\n")
+		b.WriteString("• i: Search query (I: clear & type)\n")
+		b.WriteString("• Esc: Exit input / Cancel\n")
 	} else {
 		b.WriteString("• Enter / Tap: Open chapters\n")
 		b.WriteString("• j / k (↑/↓): Navigate list\n")
 		b.WriteString("• g / G: Top / Bottom\n")
 		b.WriteString("• ctrl+d / u: Half-page scroll\n")
-		b.WriteString("• /: Edit search query\n")
+		b.WriteString("• i: Search query (I: clear & type)\n")
+		b.WriteString("• Esc: Exit input / Back\n")
 		b.WriteString("• Q: View download queue\n")
 	}
 
@@ -259,7 +260,17 @@ func (m *Model) viewSearch() string {
 		s.WriteString(m.renderTabs())
 	}
 
-	s.WriteString("Search: " + m.textInput.View() + "\n\n")
+	var modeTag string
+	var modeHelp string
+	if m.textInput.Focused() {
+		modeTag = lipgloss.NewStyle().Bold(true).Foreground(draculaPink).Render("[INSERT]")
+		modeHelp = subtitleStyle.Render(" (Esc: normal mode • Enter: search)")
+	} else {
+		modeTag = lipgloss.NewStyle().Bold(true).Foreground(draculaGreen).Render("[NORMAL]")
+		modeHelp = subtitleStyle.Render(" (i: type query • I: clear & type • Esc: back)")
+	}
+
+	s.WriteString("Search " + modeTag + ": " + m.textInput.View() + modeHelp + "\n\n")
 
 	if m.isLoading {
 		s.WriteString(m.spinner.View() + " Searching...\n")
@@ -267,7 +278,11 @@ func (m *Model) viewSearch() string {
 	}
 
 	if len(m.searchResults) == 0 {
-		s.WriteString(subtitleStyle.Render("Type a title above and press Enter to search.") + "\n")
+		if m.textInput.Focused() {
+			s.WriteString(subtitleStyle.Render("Type title above and press Enter to search.") + "\n")
+		} else {
+			s.WriteString(subtitleStyle.Render("Press 'i' to type search query, or 'I' to clear & type. Press Esc to return.") + "\n")
+		}
 		return s.String()
 	}
 
@@ -327,7 +342,7 @@ func (m *Model) viewSearch() string {
 			rightPane = m.renderSeriesDetails(m.searchResults[m.searchCursor], rightWidth)
 		}
 		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listBuilder.String(), "  ", rightPane))
-		s.WriteString("\n\n" + subtitleStyle.Render("j/k: navigate • g/G: top/bottom • ctrl+d/u: half-page • Enter: open • /: search • Q: queue • Esc: back"))
+		s.WriteString("\n\n" + subtitleStyle.Render("j/k: navigate • Enter: open • i: search • I: clear • Esc: back • Q: queue"))
 	} else {
 		s.WriteString(listBuilder.String())
 		if m.selectMode {

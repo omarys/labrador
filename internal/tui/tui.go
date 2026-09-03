@@ -4,6 +4,7 @@ import (
 	"context"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/omarys/labrador/internal/domain"
 	"github.com/omarys/labrador/internal/downloader"
 	"github.com/omarys/labrador/internal/provider"
 )
@@ -55,4 +56,47 @@ func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader
 		}, nil
 	}
 	return nil, nil
+}
+
+// RunChapters launches the TUI directly on the chapter listing for the given series URL or title,
+// allowing the user to select multiple chapters and queue downloads.
+func RunChapters(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downloader, seriesURL string, seriesTitle string, outputDir string) error {
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+
+	m := NewModel(reg, dl, ctx, cancel)
+	m.outputDir = outputDir
+	m.directChaptersMode = true
+	m.LoadPersistedQueue()
+
+	p, ok := reg.FindByURL(seriesURL)
+	if !ok && seriesTitle != "" {
+		for _, prov := range reg.List() {
+			if prov.Capabilities().CanSearch {
+				res, err := prov.Search(ctx, seriesTitle)
+				if err == nil && len(res) > 0 {
+					p = prov
+					seriesURL = res[0].URL
+					seriesTitle = res[0].Title
+					break
+				}
+			}
+		}
+	}
+
+	if p != nil {
+		m.activeProvider = p
+		m.activeSeries = domain.Series{URL: seriesURL, Title: seriesTitle}
+		m.screen = screenChapters
+		m.chapterCursor = 0
+		m.selectedChapters = make(map[string]bool)
+		m.isLoading = true
+	}
+
+	prog := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	finalModel, err := prog.Run()
+	if fm, ok := finalModel.(*Model); ok {
+		_ = fm.DumpQueue()
+	}
+	return err
 }
