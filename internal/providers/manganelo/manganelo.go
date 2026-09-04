@@ -204,6 +204,7 @@ func (p *Provider) GetChapters(ctx context.Context, series domain.Series) ([]dom
 			Title:         title,
 			URL:           p.resolveURL(href),
 			OriginalLabel: title,
+			Number:        domain.ParseChapterNumber(title),
 			Index:         index,
 		})
 		index++

@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -195,6 +194,7 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 	outputDir := fs.String("output-dir", "", "Target library directory")
 	seriesDir := fs.String("series-dir", "", "Target series directory (downloads directly inside without extra subfolder)")
 	outputFile := fs.String("output-file", "", "Target .cbz file path:")
+	forceFlag := fs.Bool("force", false, "Overwrite existing .cbz file if already downloaded")
 	jsonOutput := fs.Bool("json", false, "Output result as JSON")
 
 	if err := fs.Parse(args); err != nil {
@@ -323,6 +323,7 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 		OutputDir:  *outputDir,
 		SeriesDir:  *seriesDir,
 		OutputFile: *outputFile,
+		Force:      *forceFlag,
 	})
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
@@ -333,6 +334,11 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 		enc := json.NewEncoder(a.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(res)
+	}
+
+	if res.Skipped {
+		_, _ = fmt.Fprintf(a.Stdout, "Skipped (already downloaded): %s (%d pages)\n", res.FilePath, res.PageCount)
+		return nil
 	}
 
 	_, _ = fmt.Fprintf(a.Stdout, "Saved chapter to: %s (%d pages)\nURL: %s\n", res.FilePath, res.PageCount, res.FetchURL)
@@ -490,6 +496,8 @@ func (a *App) runResume(ctx context.Context, _ []string) error {
 		if err != nil {
 			_, _ = fmt.Fprintf(a.Stdout, "FAILED: %v\n", err)
 			remaining = append(remaining, item)
+		} else if res.Skipped {
+			_, _ = fmt.Fprintf(a.Stdout, "SKIPPED (already exists -> %s)\n", res.FilePath)
 		} else {
 			_, _ = fmt.Fprintf(a.Stdout, "DONE! (%d pages -> %s)\n", res.PageCount, res.FilePath)
 		}
@@ -556,18 +564,13 @@ func (a *App) runSelect(ctx context.Context, args []string) error {
 	return nil
 }
 
-var chapterNumberRe = regexp.MustCompile(`(?i)(?:chapter|ch\.?|ep\.?|episode)?\s*([0-9]+(?:\.[0-9]+)?)`)
-
 func matchChapter(ch domain.Chapter, targetStr string, targetNum float64, hasNum bool) bool {
-	if hasNum && ch.Number != nil && math.Abs(*ch.Number-targetNum) < 0.001 {
-		return true
-	}
 	if hasNum {
-		matches := chapterNumberRe.FindStringSubmatch(ch.Title)
-		if len(matches) > 1 {
-			if n, err := strconv.ParseFloat(matches[1], 64); err == nil && math.Abs(n-targetNum) < 0.001 {
-				return true
-			}
+		if ch.Number != nil && math.Abs(*ch.Number-targetNum) < 0.001 {
+			return true
+		}
+		if n := domain.ParseChapterNumber(ch.Title); n != nil && math.Abs(*n-targetNum) < 0.001 {
+			return true
 		}
 	}
 	if strings.EqualFold(ch.Title, targetStr) {

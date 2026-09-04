@@ -21,6 +21,7 @@ type mockProv struct {
 	delay  time.Duration
 	active int32
 	max    int32
+	calls  int32
 }
 
 func (m *mockProv) ID() string                          { return m.id }
@@ -44,6 +45,7 @@ func (m *mockProv) GetChapters(_ context.Context, _ domain.Series) ([]domain.Cha
 }
 
 func (m *mockProv) GetPages(_ context.Context, _ domain.Chapter) ([]domain.Page, error) {
+	atomic.AddInt32(&m.calls, 1)
 	cur := atomic.AddInt32(&m.active, 1)
 	for {
 		old := atomic.LoadInt32(&m.max)
@@ -189,5 +191,77 @@ func TestDownloader_ThrottleBackoff(t *testing.T) {
 	}
 	if w := dl.ProviderWorkers(prov.ID()); w != 1 {
 		t.Errorf("expected provider workers to back off to 1, got %d", w)
+	}
+}
+
+func TestDownloader_DownloadChapter_SkipExisting(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\nfake-image-bytes"))
+	}))
+	defer ts.Close()
+
+	prov := &mockProv{
+		id: "testprov",
+		pages: []domain.Page{
+			{Index: 0, URL: ts.URL + "/page0.png"},
+			{Index: 1, URL: ts.URL + "/page1.png"},
+		},
+	}
+
+	dl := downloader.New(ts.Client())
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "skip-test.cbz")
+
+	series := domain.Series{ID: "solo", Title: "Solo Leveling"}
+	chapter := domain.Chapter{ID: "ch1", Title: "Chapter 1"}
+
+	// 1. First download - should download normally
+	res1, err := dl.DownloadChapter(context.Background(), prov, series, chapter, downloader.DownloadOptions{
+		OutputFile: outPath,
+	})
+	if err != nil {
+		t.Fatalf("First DownloadChapter failed: %v", err)
+	}
+	if res1.Skipped {
+		t.Errorf("expected first download to NOT be skipped")
+	}
+	if res1.PageCount != 2 {
+		t.Errorf("expected 2 pages, got %d", res1.PageCount)
+	}
+	if atomic.LoadInt32(&prov.calls) != 1 {
+		t.Errorf("expected 1 GetPages call, got %d", atomic.LoadInt32(&prov.calls))
+	}
+
+	// 2. Second download without Force - should be skipped without calling provider GetPages
+	res2, err := dl.DownloadChapter(context.Background(), prov, series, chapter, downloader.DownloadOptions{
+		OutputFile: outPath,
+	})
+	if err != nil {
+		t.Fatalf("Second DownloadChapter failed: %v", err)
+	}
+	if !res2.Skipped {
+		t.Errorf("expected second download to be skipped")
+	}
+	if res2.PageCount != 2 {
+		t.Errorf("expected skipped download to report 2 pages from archive, got %d", res2.PageCount)
+	}
+	if atomic.LoadInt32(&prov.calls) != 1 {
+		t.Errorf("expected GetPages calls to stay 1, got %d", atomic.LoadInt32(&prov.calls))
+	}
+
+	// 3. Third download with Force: true - should re-download
+	res3, err := dl.DownloadChapter(context.Background(), prov, series, chapter, downloader.DownloadOptions{
+		OutputFile: outPath,
+		Force:      true,
+	})
+	if err != nil {
+		t.Fatalf("Third DownloadChapter (Force) failed: %v", err)
+	}
+	if res3.Skipped {
+		t.Errorf("expected forced download to NOT be skipped")
+	}
+	if atomic.LoadInt32(&prov.calls) != 2 {
+		t.Errorf("expected GetPages calls to increment to 2, got %d", atomic.LoadInt32(&prov.calls))
 	}
 }

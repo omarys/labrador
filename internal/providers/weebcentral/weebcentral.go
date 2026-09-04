@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -239,15 +238,6 @@ func (p *Provider) GetChapters(ctx context.Context, series domain.Series) ([]dom
 		}
 		chapterID := filepath.Base(chapterURL)
 
-		var numVal *float64
-		// Extract chapter number
-		for _, field := range strings.Fields(title) {
-			if n, err := strconv.ParseFloat(strings.Trim(field, "#:."), 64); err == nil {
-				numVal = &n
-				break
-			}
-		}
-
 		chapters = append(chapters, domain.Chapter{
 			ID:            chapterID,
 			SeriesID:      series.ID,
@@ -255,7 +245,7 @@ func (p *Provider) GetChapters(ctx context.Context, series domain.Series) ([]dom
 			URL:           chapterURL,
 			OriginalLabel: title,
 			Index:         index,
-			Number:        numVal,
+			Number:        domain.ParseChapterNumber(title),
 		})
 		index++
 	})

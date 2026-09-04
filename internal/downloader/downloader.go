@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
 	"io"
@@ -29,6 +30,7 @@ type DownloadOptions struct {
 	OutputDir  string // Directory to write <Series>/<Chapter>.cbz
 	SeriesDir  string // Explicit series directory (writes <Chapter>.cbz directly inside it, no extra subfolder)
 	OutputFile string // Explicit file path (overrides OutputDir)
+	Force      bool   // Overwrite existing .cbz files instead of skipping
 }
 
 // DownloadResult returns machine-readable details for Dewey and the CLI.
@@ -45,6 +47,7 @@ type DownloadResult struct {
 	FetchURL       string   `json:"fetch_url,omitempty"`
 	FilePath       string   `json:"file_path"`
 	PageCount      int      `json:"page_count"`
+	Skipped        bool     `json:"skipped,omitempty"`
 }
 
 // ProviderThrottleState manages dynamic worker concurrency and throttling per provider.
@@ -140,7 +143,54 @@ func (d *Downloader) IsProviderThrottled(providerID string) bool {
 	return d.GetProviderThrottleState(providerID).IsThrottled()
 }
 
+// ResolveDestinationPath determines the target .cbz path for a chapter without downloading it.
+func ResolveDestinationPath(series domain.Series, chapter domain.Chapter, opts DownloadOptions) string {
+	if opts.OutputFile != "" {
+		return opts.OutputFile
+	}
+
+	sanitizedSeries := sanitizeFilename(series.Title)
+	sanitizedChapter := sanitizeFilename(chapter.Title)
+	if sanitizedChapter == "" {
+		sanitizedChapter = fmt.Sprintf("Chapter_%d", chapter.Index)
+	}
+	filename := fmt.Sprintf("%s - %s.cbz", sanitizedSeries, sanitizedChapter)
+
+	if opts.SeriesDir != "" {
+		return filepath.Join(opts.SeriesDir, filename)
+	} else if opts.OutputDir != "" {
+		base := filepath.Base(filepath.Clean(opts.OutputDir))
+		cleanBase := strings.ToLower(strings.ReplaceAll(base, "_", " "))
+		cleanSeries := strings.ToLower(strings.ReplaceAll(sanitizedSeries, "_", " "))
+		if cleanBase == cleanSeries {
+			return filepath.Join(opts.OutputDir, filename)
+		}
+		return filepath.Join(opts.OutputDir, sanitizedSeries, filename)
+	}
+
+	home, _ := os.UserHomeDir()
+	outDir := filepath.Join(home, "Downloads", "Manga")
+	return filepath.Join(outDir, sanitizedSeries, filename)
+}
+
+func countArchivePages(cbzPath string) int {
+	r, err := zip.OpenReader(cbzPath)
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = r.Close() }()
+
+	count := 0
+	for _, f := range r.File {
+		if !strings.HasSuffix(strings.ToLower(f.Name), ".xml") && !f.FileInfo().IsDir() {
+			count++
+		}
+	}
+	return count
+}
+
 // DownloadChapter fetches all pages for a chapter and writes a .cbz archive.
+// If the destination archive already exists and opts.Force is false, it skips downloading.
 func (d *Downloader) DownloadChapter(
 	ctx context.Context,
 	prov provider.Provider,
@@ -152,7 +202,34 @@ func (d *Downloader) DownloadChapter(
 		return nil, fmt.Errorf("provider cannot be nil")
 	}
 
-	// 1. Acquire provider-level lock (serializes chapter downloads for this provider)
+	// 1. Determine destination path and check for existing download
+	destPath := ResolveDestinationPath(series, chapter, opts)
+	absPath, err := filepath.Abs(destPath)
+	if err != nil {
+		absPath = destPath
+	}
+
+	if !opts.Force {
+		if fi, err := os.Stat(destPath); err == nil && fi.Size() > 0 {
+			return &DownloadResult{
+				ProviderID:     prov.ID(),
+				SeriesID:       series.ID,
+				SeriesTitle:    series.Title,
+				SeriesURL:      series.URL,
+				SeriesFetchURL: series.URL,
+				ChapterID:      chapter.ID,
+				ChapterTitle:   chapter.Title,
+				ChapterNumber:  chapter.Number,
+				ChapterURL:     chapter.URL,
+				FetchURL:       chapter.URL,
+				FilePath:       absPath,
+				PageCount:      countArchivePages(destPath),
+				Skipped:        true,
+			}, nil
+		}
+	}
+
+	// 2. Acquire provider-level lock (serializes chapter downloads for this provider)
 	lock := d.getLock(prov.ID())
 	lock.Lock()
 	defer lock.Unlock()
@@ -160,7 +237,7 @@ func (d *Downloader) DownloadChapter(
 	throttleState := d.GetProviderThrottleState(prov.ID())
 	workerCount := throttleState.Workers()
 
-	// 2. Discover chapter pages
+	// 3. Discover chapter pages
 	pages, err := prov.GetPages(ctx, chapter)
 	if err != nil {
 		return nil, fmt.Errorf("getting chapter pages: %w", err)
@@ -169,7 +246,7 @@ func (d *Downloader) DownloadChapter(
 		return nil, fmt.Errorf("no pages found for chapter %s", chapter.ID)
 	}
 
-	// 3. Download page image bytes with a bounded per-provider worker pool
+	// 4. Download page image bytes with a bounded per-provider worker pool
 	pageDataList := make([]archive.PageData, len(pages))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(workerCount)
@@ -191,42 +268,9 @@ func (d *Downloader) DownloadChapter(
 		return nil, fmt.Errorf("downloading pages: %w", err)
 	}
 
-	// 4. Determine destination path
-	destPath := opts.OutputFile
-	if destPath == "" {
-		sanitizedSeries := sanitizeFilename(series.Title)
-		sanitizedChapter := sanitizeFilename(chapter.Title)
-		if sanitizedChapter == "" {
-			sanitizedChapter = fmt.Sprintf("Chapter_%d", chapter.Index)
-		}
-		filename := fmt.Sprintf("%s - %s.cbz", sanitizedSeries, sanitizedChapter)
-
-		if opts.SeriesDir != "" {
-			destPath = filepath.Join(opts.SeriesDir, filename)
-		} else if opts.OutputDir != "" {
-			base := filepath.Base(filepath.Clean(opts.OutputDir))
-			cleanBase := strings.ToLower(strings.ReplaceAll(base, "_", " "))
-			cleanSeries := strings.ToLower(strings.ReplaceAll(sanitizedSeries, "_", " "))
-			if cleanBase == cleanSeries {
-				destPath = filepath.Join(opts.OutputDir, filename)
-			} else {
-				destPath = filepath.Join(opts.OutputDir, sanitizedSeries, filename)
-			}
-		} else {
-			home, _ := os.UserHomeDir()
-			outDir := filepath.Join(home, "Downloads", "Manga")
-			destPath = filepath.Join(outDir, sanitizedSeries, filename)
-		}
-	}
-
 	// 5. Build .cbz archive
 	if err := archive.WriteCBZ(destPath, series, chapter, pageDataList); err != nil {
 		return nil, fmt.Errorf("writing CBZ: %w", err)
-	}
-
-	absPath, err := filepath.Abs(destPath)
-	if err != nil {
-		absPath = destPath
 	}
 
 	return &DownloadResult{
@@ -343,9 +387,10 @@ func detectExtension(rawURL string, data []byte) string {
 
 func sanitizeFilename(name string) string {
 	replacer := strings.NewReplacer(
+		": ", " - ",
+		":", " - ",
 		"/", "_",
 		"//", "_",
-		":", "_",
 		"*", "_",
 		"?", "_",
 		"\"", "_",
@@ -353,5 +398,13 @@ func sanitizeFilename(name string) string {
 		">", "_",
 		"|", "_",
 	)
-	return strings.TrimSpace(replacer.Replace(name))
+	clean := strings.TrimSpace(replacer.Replace(name))
+	for strings.Contains(clean, "  ") {
+		clean = strings.ReplaceAll(clean, "  ", " ")
+	}
+	// Avoid exceeding filesystem name length limits (max 255 bytes)
+	if len(clean) > 200 {
+		clean = strings.TrimSpace(clean[:200])
+	}
+	return clean
 }

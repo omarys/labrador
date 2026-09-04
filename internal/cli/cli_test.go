@@ -225,6 +225,64 @@ func TestCLI_Fetch_DeweyIntegration(t *testing.T) {
 	}
 }
 
+func TestCLI_Fetch_SkipAndForce(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\nfake-image-bytes"))
+	}))
+	defer ts.Close()
+
+	reg := provider.NewRegistry()
+	_ = reg.Register(&cliMockProv{
+		id:      "mangapill",
+		name:    "MangaPill",
+		domain:  "mangapill.com",
+		baseURL: ts.URL,
+		series: []domain.Series{
+			{ID: "solo", Title: "Solo Leveling"},
+		},
+	})
+
+	dl := downloader.New(ts.Client())
+	tmpDir := t.TempDir()
+
+	// 1. Initial fetch
+	stdout1 := &bytes.Buffer{}
+	app1 := &cli.App{Registry: reg, Downloader: dl, Stdout: stdout1, Stderr: &bytes.Buffer{}}
+	if err := app1.Run(context.Background(), []string{
+		"fetch", "--url", "https://mangapill.com/manga/solo", "--chapter", "1", "--output-dir", tmpDir,
+	}); err != nil {
+		t.Fatalf("Initial fetch failed: %v", err)
+	}
+	if !strings.Contains(stdout1.String(), "Saved chapter to") {
+		t.Errorf("expected initial fetch to save, got: %s", stdout1.String())
+	}
+
+	// 2. Second fetch - should skip
+	stdout2 := &bytes.Buffer{}
+	app2 := &cli.App{Registry: reg, Downloader: dl, Stdout: stdout2, Stderr: &bytes.Buffer{}}
+	if err := app2.Run(context.Background(), []string{
+		"fetch", "--url", "https://mangapill.com/manga/solo", "--chapter", "1", "--output-dir", tmpDir,
+	}); err != nil {
+		t.Fatalf("Second fetch failed: %v", err)
+	}
+	if !strings.Contains(stdout2.String(), "Skipped (already downloaded)") {
+		t.Errorf("expected second fetch to be skipped, got: %s", stdout2.String())
+	}
+
+	// 3. Third fetch with --force - should re-download
+	stdout3 := &bytes.Buffer{}
+	app3 := &cli.App{Registry: reg, Downloader: dl, Stdout: stdout3, Stderr: &bytes.Buffer{}}
+	if err := app3.Run(context.Background(), []string{
+		"fetch", "--url", "https://mangapill.com/manga/solo", "--chapter", "1", "--output-dir", tmpDir, "--force",
+	}); err != nil {
+		t.Fatalf("Third fetch with --force failed: %v", err)
+	}
+	if !strings.Contains(stdout3.String(), "Saved chapter to") {
+		t.Errorf("expected forced fetch to save, got: %s", stdout3.String())
+	}
+}
+
 func TestCLI_Resume(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")

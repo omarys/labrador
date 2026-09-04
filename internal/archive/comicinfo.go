@@ -14,6 +14,7 @@ type ComicInfo struct {
 	Title     string   `xml:"Title,omitempty"`
 	Series    string   `xml:"Series,omitempty"`
 	Number    string   `xml:"Number,omitempty"`
+	Summary   string   `xml:"Summary,omitempty"`
 	PageCount int      `xml:"PageCount"`
 	Year      int      `xml:"Year,omitempty"`
 	Month     int      `xml:"Month,omitempty"`
@@ -37,6 +38,7 @@ func GenerateComicInfo(series domain.Series, chapter domain.Chapter, pageCount i
 		Title:     chapter.Title,
 		Series:    series.Title,
 		Number:    numberStr,
+		Summary:   chapter.Title,
 		PageCount: pageCount,
 		Year:      now.Year(),
 		Month:     int(now.Month()),
