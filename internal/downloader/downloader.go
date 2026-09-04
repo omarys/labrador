@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,13 +17,18 @@ import (
 	"github.com/omarys/labrador/internal/domain"
 	"github.com/omarys/labrador/internal/provider"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 const (
-	DefaultProviderWorkers   = 3 // 3 concurrent page workers per provider by default
+	DefaultProviderWorkers   = 3 // 3 concurrent workers per provider by default
 	ThrottledProviderWorkers = 1 // Backed off to a single worker when throttled
 	DefaultTimeout           = 30 * time.Second
 	MaxRetries               = 3
+)
+
+var (
+	ThrottleCooldown = 30 * time.Second // Cooldown period before recovering back to DefaultProviderWorkers
 )
 
 // DownloadOptions configures destination paths for downloads.
@@ -59,14 +65,22 @@ type ProviderThrottleState struct {
 }
 
 func (s *ProviderThrottleState) Workers() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isThrottled && time.Since(s.lastThrottled) >= ThrottleCooldown {
+		s.workers = DefaultProviderWorkers
+		s.isThrottled = false
+	}
 	return s.workers
 }
 
 func (s *ProviderThrottleState) IsThrottled() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isThrottled && time.Since(s.lastThrottled) >= ThrottleCooldown {
+		s.workers = DefaultProviderWorkers
+		s.isThrottled = false
+	}
 	return s.isThrottled
 }
 
@@ -89,7 +103,7 @@ func (s *ProviderThrottleState) Reset() {
 type Downloader struct {
 	client         *http.Client
 	mu             sync.Mutex
-	locks          map[string]*sync.Mutex
+	semaphores     map[string]*semaphore.Weighted
 	throttleStates map[string]*ProviderThrottleState
 }
 
@@ -100,22 +114,22 @@ func New(client *http.Client) *Downloader {
 	}
 	return &Downloader{
 		client:         client,
-		locks:          make(map[string]*sync.Mutex),
+		semaphores:     make(map[string]*semaphore.Weighted),
 		throttleStates: make(map[string]*ProviderThrottleState),
 	}
 }
 
-// getLock returns the serialization mutex for a specific provider ID.
-func (d *Downloader) getLock(providerID string) *sync.Mutex {
+// getSemaphore returns the concurrency semaphore for a specific provider ID.
+func (d *Downloader) getSemaphore(providerID string) *semaphore.Weighted {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	l, exists := d.locks[providerID]
+	sem, exists := d.semaphores[providerID]
 	if !exists {
-		l = &sync.Mutex{}
-		d.locks[providerID] = l
+		sem = semaphore.NewWeighted(int64(DefaultProviderWorkers))
+		d.semaphores[providerID] = sem
 	}
-	return l
+	return sem
 }
 
 // GetProviderThrottleState returns or initializes the concurrency state for a provider.
@@ -168,9 +182,12 @@ func ResolveDestinationPath(series domain.Series, chapter domain.Chapter, opts D
 		return filepath.Join(opts.OutputDir, sanitizedSeries, filename)
 	}
 
-	home, _ := os.UserHomeDir()
-	outDir := filepath.Join(home, "Downloads", "Manga")
-	return filepath.Join(outDir, sanitizedSeries, filename)
+	libDir := ResolveDefaultLibraryDir()
+	if seriesDir := FindSeriesDirectoryInLibrary(libDir, series.Title); seriesDir != "" {
+		return filepath.Join(seriesDir, filename)
+	}
+
+	return filepath.Join(libDir, sanitizedSeries, filename)
 }
 
 func countArchivePages(cbzPath string) int {
@@ -209,8 +226,14 @@ func (d *Downloader) DownloadChapter(
 		absPath = destPath
 	}
 
+	targetDir := filepath.Dir(destPath)
+	if opts.SeriesDir != "" {
+		targetDir = opts.SeriesDir
+	}
+
 	if !opts.Force {
 		if fi, err := os.Stat(destPath); err == nil && fi.Size() > 0 {
+			absExisting, _ := filepath.Abs(destPath)
 			return &DownloadResult{
 				ProviderID:     prov.ID(),
 				SeriesID:       series.ID,
@@ -222,19 +245,46 @@ func (d *Downloader) DownloadChapter(
 				ChapterNumber:  chapter.Number,
 				ChapterURL:     chapter.URL,
 				FetchURL:       chapter.URL,
-				FilePath:       absPath,
+				FilePath:       absExisting,
 				PageCount:      countArchivePages(destPath),
+				Skipped:        true,
+			}, nil
+		}
+
+		if existingFile := FindExistingChapterFile(targetDir, series, chapter); existingFile != "" {
+			absExisting, _ := filepath.Abs(existingFile)
+			return &DownloadResult{
+				ProviderID:     prov.ID(),
+				SeriesID:       series.ID,
+				SeriesTitle:    series.Title,
+				SeriesURL:      series.URL,
+				SeriesFetchURL: series.URL,
+				ChapterID:      chapter.ID,
+				ChapterTitle:   chapter.Title,
+				ChapterNumber:  chapter.Number,
+				ChapterURL:     chapter.URL,
+				FetchURL:       chapter.URL,
+				FilePath:       absExisting,
+				PageCount:      countArchivePages(existingFile),
 				Skipped:        true,
 			}, nil
 		}
 	}
 
-	// 2. Acquire provider-level lock (serializes chapter downloads for this provider)
-	lock := d.getLock(prov.ID())
-	lock.Lock()
-	defer lock.Unlock()
-
+	// 2. Acquire provider-level worker slot (allows up to DefaultProviderWorkers, backing off to 1 if throttled)
 	throttleState := d.GetProviderThrottleState(prov.ID())
+	sem := d.getSemaphore(prov.ID())
+
+	weight := int64(1)
+	if throttleState.IsThrottled() {
+		weight = int64(DefaultProviderWorkers)
+	}
+
+	if err := sem.Acquire(ctx, weight); err != nil {
+		return nil, fmt.Errorf("acquiring worker slot for provider %s: %w", prov.ID(), err)
+	}
+	defer sem.Release(weight)
+
 	workerCount := throttleState.Workers()
 
 	// 3. Discover chapter pages
@@ -322,14 +372,25 @@ func (d *Downloader) fetchPageWithRetry(ctx context.Context, providerID string, 
 
 		// Detect HTTP throttling (429 Too Many Requests, 503 Service Unavailable)
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			retryHeader := resp.Header.Get("Retry-After")
 			_ = resp.Body.Close()
+
 			// Back off this provider to 1 worker
 			d.GetProviderThrottleState(providerID).MarkThrottled()
+
+			// Compute exponential backoff with Retry-After support
+			backoff := time.Duration(1<<attempt) * 500 * time.Millisecond
+			if ra := parseRetryAfter(retryHeader); ra > backoff {
+				backoff = ra
+			}
+			if backoff > 10*time.Second {
+				backoff = 10 * time.Second
+			}
 
 			select {
 			case <-ctx.Done():
 				return archive.PageData{}, ctx.Err()
-			case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+			case <-time.After(backoff):
 			}
 			lastErr = fmt.Errorf("throttled by provider (HTTP %d)", resp.StatusCode)
 			continue
@@ -407,4 +468,20 @@ func sanitizeFilename(name string) string {
 		clean = strings.TrimSpace(clean[:200])
 	}
 	return clean
+}
+
+func parseRetryAfter(header string) time.Duration {
+	if header == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(strings.TrimSpace(header)); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if t, err := http.ParseTime(header); err == nil {
+		d := time.Until(t)
+		if d > 0 {
+			return d
+		}
+	}
+	return 0
 }

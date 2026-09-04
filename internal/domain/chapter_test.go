@@ -43,6 +43,37 @@ func TestParseChapterNumber(t *testing.T) {
 	}
 }
 
+func TestParseChapterNumberFromFilename(t *testing.T) {
+	tests := []struct {
+		filename string
+		expected *float64
+	}{
+		{"[0378]_Chapter_9_-_The_Golden_Age.cbz", ptr(9.0)},
+		{"[0001]_Chapter_386_-_Can_You_Seize_the_Wandering_Birds_in_the_Clouds.cbz", ptr(386.0)},
+		{"[0067]_Chapter_1.cbz", ptr(1.0)},
+		{"Berserk - Chapter 1 - The Golden Age.cbz", ptr(1.0)},
+		{"Solo Leveling - c105.cbz", ptr(105.0)},
+		{"[0045]_Episode_209_Aug_15.cbz", ptr(209.0)},
+		{"Chapter 12.5.cbz", ptr(12.5)},
+		{"[0045].cbz", ptr(45.0)},
+	}
+
+	for _, tc := range tests {
+		got := domain.ParseChapterNumberFromFilename(tc.filename)
+		if tc.expected == nil {
+			if got != nil {
+				t.Errorf("filename %q: expected nil, got %v", tc.filename, *got)
+			}
+		} else {
+			if got == nil {
+				t.Errorf("filename %q: expected %v, got nil", tc.filename, *tc.expected)
+			} else if *got != *tc.expected {
+				t.Errorf("filename %q: expected %v, got %v", tc.filename, *tc.expected, *got)
+			}
+		}
+	}
+}
+
 func ptr(f float64) *float64 {
 	return &f
 }

@@ -2,12 +2,12 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/omarys/labrador/internal/domain"
+	"github.com/omarys/labrador/internal/downloader"
 	"github.com/omarys/labrador/internal/provider"
 )
 
@@ -184,15 +184,23 @@ func (m *Model) renderChapterDetails(width int) string {
 
 	b.WriteString(metadataLabelStyle.Render("Provider: ") + metadataValueStyle.Render(m.activeProvider.Name()) + "\n")
 	b.WriteString(metadataLabelStyle.Render("Total Chapters: ") + metadataValueStyle.Render(fmt.Sprintf("%d", len(m.chapters))) + "\n")
-	b.WriteString(metadataLabelStyle.Render("Selected: ") + lipgloss.NewStyle().Foreground(draculaGreen).Bold(true).Render(fmt.Sprintf("%d", len(m.selectedChapters))) + "\n")
+	if len(m.downloadedChapters) > 0 {
+		b.WriteString(metadataLabelStyle.Render("Saved: ") + lipgloss.NewStyle().Foreground(draculaGreen).Bold(true).Render(fmt.Sprintf("%d", len(m.downloadedChapters))) + "\n")
+	}
+	b.WriteString(metadataLabelStyle.Render("Selected: ") + lipgloss.NewStyle().Foreground(draculaCyan).Bold(true).Render(fmt.Sprintf("%d", len(m.selectedChapters))) + "\n")
 
 	dest := m.seriesDir
 	if dest == "" {
 		if m.outputDir != "" {
 			dest = filepath.Join(m.outputDir, m.activeSeries.Title)
 		} else {
-			homeDir, _ := os.UserHomeDir()
-			dest = filepath.Join(homeDir, "Downloads", "Manga", m.activeSeries.Title)
+			libDir := downloader.ResolveDefaultLibraryDir()
+			found := downloader.FindSeriesDirectoryInLibrary(libDir, m.activeSeries.Title)
+			if found != "" {
+				dest = found
+			} else {
+				dest = filepath.Join(libDir, m.activeSeries.Title)
+			}
 		}
 	}
 	if len([]rune(dest)) > width-14 {
@@ -203,7 +211,7 @@ func (m *Model) renderChapterDetails(width int) string {
 
 	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(draculaCyan).Render("Controls") + "\n")
 	b.WriteString("• Space / Tap: Toggle selected\n")
-	b.WriteString("• a / tab: Select all / none\n")
+	b.WriteString("• a / tab: Select missing / none\n")
 	b.WriteString("• d / Enter: Queue download\n")
 	b.WriteString("• j / k (↑/↓): Navigate list\n")
 	b.WriteString("• g / G: Top / Bottom\n")
@@ -465,12 +473,28 @@ func (m *Model) viewChapters() string {
 			checked = badgeChecked
 		}
 
-		line := fmt.Sprintf("%s %s %s", cursor, checked, ch.Title)
-		runes := []rune(line)
-		if len(runes) > listWidth && listWidth > 1 {
-			line = string(runes[:listWidth-1]) + "…"
+		savedBadge := ""
+		badgeCols := 0
+		if m.downloadedChapters[key] != "" {
+			savedBadge = " " + badgeSaved
+			badgeCols = 10 // " [✓ Saved]" occupies 10 display columns
 		}
 
+		prefix := fmt.Sprintf("%s %s ", cursor, checked)
+		prefixCols := 6
+
+		maxTitleCols := listWidth - prefixCols - badgeCols
+		if maxTitleCols < 10 {
+			maxTitleCols = 10
+		}
+
+		chTitle := ch.Title
+		titleRunes := []rune(chTitle)
+		if len(titleRunes) > maxTitleCols {
+			chTitle = string(titleRunes[:maxTitleCols-1]) + "…"
+		}
+
+		line := fmt.Sprintf("%s%s%s", prefix, chTitle, savedBadge)
 		if i == m.chapterCursor {
 			listBuilder.WriteString(selectedItemStyle.Render(line) + "\n")
 		} else {
@@ -488,10 +512,10 @@ func (m *Model) viewChapters() string {
 		rightWidth := m.width - listWidth - 5
 		rightPane := m.renderChapterDetails(rightWidth)
 		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listBuilder.String(), "  ", rightPane))
-		s.WriteString("\n\n" + subtitleStyle.Render("Space: toggle • a: select all/none • d/Enter: download • j/k: navigate • Q: queue • Esc: back"))
+		s.WriteString("\n\n" + subtitleStyle.Render("Space: toggle • a: select missing/none • d/Enter: download • j/k: navigate • Q: queue • Esc: back"))
 	} else {
 		s.WriteString(listBuilder.String())
-		s.WriteString(m.renderTouchBar([]string{"[ ␣ Toggle ]", "[ ✓ All ]", "[ 📥 Download ]", "[ 📋 Queue ]", "[ ✖ Back ]"}))
+		s.WriteString(m.renderTouchBar([]string{"[ ␣ Toggle ]", "[ ✓ Missing ]", "[ 📥 Download ]", "[ 📋 Queue ]", "[ ✖ Back ]"}))
 	}
 	return s.String()
 }

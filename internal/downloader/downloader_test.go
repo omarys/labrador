@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -111,7 +112,7 @@ func TestDownloader_DownloadChapter_Success(t *testing.T) {
 	}
 }
 
-func TestDownloader_ProviderLocking_Serialization(t *testing.T) {
+func TestDownloader_ProviderWorkers_Concurrency(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\n"))
 	}))
@@ -128,6 +129,45 @@ func TestDownloader_ProviderLocking_Serialization(t *testing.T) {
 	dl := downloader.New(ts.Client())
 	tmpDir := t.TempDir()
 
+	done := make(chan struct{}, 4)
+	for i := 0; i < 4; i++ {
+		idx := i
+		go func() {
+			_, _ = dl.DownloadChapter(context.Background(), prov, domain.Series{Title: "S"}, domain.Chapter{Title: "C"}, downloader.DownloadOptions{
+				OutputFile: filepath.Join(tmpDir, filepath.Clean(string(rune('a'+idx)))+".cbz"),
+			})
+			done <- struct{}{}
+		}()
+	}
+
+	for i := 0; i < 4; i++ {
+		<-done
+	}
+
+	// Verify that provider allowed up to 3 concurrent workers, never exceeding 3
+	if max := atomic.LoadInt32(&prov.max); max != 3 {
+		t.Errorf("expected provider downloads to use 3 workers, got max concurrency %d", max)
+	}
+}
+
+func TestDownloader_ProviderWorkers_Throttled_Serialized(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\n"))
+	}))
+	defer ts.Close()
+
+	prov := &mockProv{
+		id: "throttled-prov-serialized",
+		pages: []domain.Page{
+			{Index: 0, URL: ts.URL + "/p0.png"},
+		},
+		delay: 50 * time.Millisecond,
+	}
+
+	dl := downloader.New(ts.Client())
+	dl.GetProviderThrottleState(prov.ID()).MarkThrottled()
+	tmpDir := t.TempDir()
+
 	done := make(chan struct{}, 2)
 	for i := 0; i < 2; i++ {
 		idx := i
@@ -142,9 +182,40 @@ func TestDownloader_ProviderLocking_Serialization(t *testing.T) {
 	<-done
 	<-done
 
-	// Verify that GetPages was executed sequentially (max concurrent = 1)
+	// Verify that throttled provider was serialized to 1 worker
 	if max := atomic.LoadInt32(&prov.max); max != 1 {
-		t.Errorf("expected provider downloads to be serialized (max concurrency 1), got %d", max)
+		t.Errorf("expected throttled provider downloads to be serialized (max concurrency 1), got %d", max)
+	}
+}
+
+func TestDownloader_ThrottleCooldownRecovery(t *testing.T) {
+	origCooldown := downloader.ThrottleCooldown
+	downloader.ThrottleCooldown = 50 * time.Millisecond
+	defer func() { downloader.ThrottleCooldown = origCooldown }()
+
+	dl := downloader.New(nil)
+	provID := "recover-prov"
+
+	if w := dl.ProviderWorkers(provID); w != 3 {
+		t.Fatalf("expected initial workers to be 3, got %d", w)
+	}
+
+	dl.GetProviderThrottleState(provID).MarkThrottled()
+	if w := dl.ProviderWorkers(provID); w != 1 {
+		t.Fatalf("expected throttled workers to be 1, got %d", w)
+	}
+	if !dl.IsProviderThrottled(provID) {
+		t.Fatalf("expected provider to be marked as throttled")
+	}
+
+	// Wait for cooldown to expire
+	time.Sleep(60 * time.Millisecond)
+
+	if !dl.IsProviderThrottled(provID) && dl.ProviderWorkers(provID) != 3 {
+		t.Errorf("expected workers to recover to 3 after cooldown, got %d", dl.ProviderWorkers(provID))
+	}
+	if dl.IsProviderThrottled(provID) {
+		t.Errorf("expected IsProviderThrottled to return false after cooldown")
 	}
 }
 
@@ -263,5 +334,48 @@ func TestDownloader_DownloadChapter_SkipExisting(t *testing.T) {
 	}
 	if atomic.LoadInt32(&prov.calls) != 2 {
 		t.Errorf("expected GetPages calls to increment to 2, got %d", atomic.LoadInt32(&prov.calls))
+	}
+}
+
+func TestDownloader_DownloadChapter_SkipDeweyBracketFile(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\nfake-image-bytes"))
+	}))
+	defer ts.Close()
+
+	prov := &mockProv{
+		id: "testprov",
+		pages: []domain.Page{
+			{Index: 0, URL: ts.URL + "/page0.png"},
+		},
+	}
+
+	dl := downloader.New(ts.Client())
+	tmpDir := t.TempDir()
+
+	// Create a simulated Dewey archive file: [0017]_Chapter_1_The_Wind_of_Swords.cbz
+	deweyFile := filepath.Join(tmpDir, "[0017]_Chapter_1_The_Wind_of_Swords.cbz")
+	if err := os.WriteFile(deweyFile, []byte("PK\x05\x06fake-zip"), 0644); err != nil {
+		t.Fatalf("failed creating fake zip: %v", err)
+	}
+
+	series := domain.Series{ID: "berserk", Title: "Berserk"}
+	chapter := domain.Chapter{ID: "ch1", Title: "Chapter 1 - The Wind of Swords"}
+
+	res, err := dl.DownloadChapter(context.Background(), prov, series, chapter, downloader.DownloadOptions{
+		SeriesDir: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("DownloadChapter failed: %v", err)
+	}
+	if !res.Skipped {
+		t.Errorf("expected download to be skipped because [0017]_Chapter_1_The_Wind_of_Swords.cbz exists")
+	}
+	if res.FilePath != deweyFile {
+		t.Errorf("expected res.FilePath to be %s, got %s", deweyFile, res.FilePath)
+	}
+	if atomic.LoadInt32(&prov.calls) != 0 {
+		t.Errorf("expected 0 GetPages calls for skipped chapter, got %d", atomic.LoadInt32(&prov.calls))
 	}
 }

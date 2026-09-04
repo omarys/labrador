@@ -89,6 +89,7 @@ var (
 	badgeDone    = statusCompletedStyle.Render("[✓ DONE]")
 	badgeFailed  = statusFailedStyle.Render("[✗ FAILED]")
 	badgeQueued  = statusQueuedStyle.Render("[⏳ QUEUED]")
+	badgeSaved   = lipgloss.NewStyle().Foreground(draculaGreen).Render("[✓ Saved]")
 
 	// Desktop Side-Panel & Touch Action Styles
 	paneBorderStyle = lipgloss.NewStyle().

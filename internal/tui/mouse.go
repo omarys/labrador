@@ -270,11 +270,8 @@ func (m *Model) queueSelectedChapters() (tea.Model, tea.Cmd) {
 		m.statusMsg = fmt.Sprintf("Added %d chapter(s) to queue (press 'Q' to view)", len(toQueue))
 		m.selectedChapters = make(map[string]bool)
 
-		if !m.isDownloading {
-			nextM, nextCmd := m.startNextDownload()
-			return nextM, tea.Batch(dumpQueueAsyncCmd(m.queue), nextCmd)
-		}
-		return m, dumpQueueAsyncCmd(m.queue)
+		nextM, nextCmd := m.startNextDownload()
+		return nextM, tea.Batch(dumpQueueAsyncCmd(m.queue), nextCmd)
 	}
 	return m, nil
 }

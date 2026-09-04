@@ -70,8 +70,12 @@ type providerSearchChunkMsg struct {
 }
 
 type queueDownloadFinishedMsg struct {
-	itemID string
-	err    error
+	itemID  string
+	err     error
+	skipped bool
+	path    string
+	chapter domain.Chapter
+	series  domain.Series
 }
 
 type searchResultItem struct {
@@ -137,6 +141,7 @@ type Model struct {
 	outputDir          string
 	seriesDir          string
 	directChaptersMode bool
+	downloadedChapters map[string]string
 
 	// Touch / click tracking
 	lastClickTime time.Time
@@ -175,21 +180,22 @@ func NewModel(reg *provider.Registry, dl *downloader.Downloader, ctx context.Con
 	}
 
 	return Model{
-		registry:          reg,
-		downloader:        dl,
-		ctx:               ctx,
-		cancelFunc:        cancel,
-		screen:            screenProviders,
-		previousScreen:    screenProviders,
-		activeTab:         tabSearch,
-		spinner:           s,
-		textInput:         ti,
-		providers:         providers,
-		selectedProviders: selected,
-		selectedChapters:  make(map[string]bool),
-		browseSort:        domain.SortPopular,
-		queue:             make([]*QueueItem, 0),
-		chapterCache:      make(map[string][]domain.Chapter),
+		registry:           reg,
+		downloader:         dl,
+		ctx:                ctx,
+		cancelFunc:         cancel,
+		screen:             screenProviders,
+		previousScreen:     screenProviders,
+		activeTab:          tabSearch,
+		spinner:            s,
+		textInput:          ti,
+		providers:          providers,
+		selectedProviders:  selected,
+		selectedChapters:   make(map[string]bool),
+		downloadedChapters: make(map[string]string),
+		browseSort:         domain.SortPopular,
+		queue:              make([]*QueueItem, 0),
+		chapterCache:       make(map[string][]domain.Chapter),
 	}
 }
 

@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -11,7 +13,6 @@ import (
 	"github.com/omarys/labrador/internal/domain"
 	"github.com/omarys/labrador/internal/downloader"
 	"github.com/omarys/labrador/internal/provider"
-	"strings"
 )
 
 func (m *Model) filteredQueue() []*QueueItem {
@@ -94,9 +95,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chapters = msg.chapters
 			m.chapterCursor = 0
 			m.selectedChapters = make(map[string]bool)
+			m.downloadedChapters = make(map[string]string)
 			m.statusMsg = fmt.Sprintf("Found %d chapters", len(msg.chapters))
 			if msg.cacheKey != "" {
 				m.chapterCache[msg.cacheKey] = msg.chapters
+			}
+
+			// Scan target directory for existing chapter files (.cbz/.zip)
+			targetDir := m.seriesDir
+			if targetDir == "" && m.outputDir != "" {
+				targetDir = filepath.Join(m.outputDir, m.activeSeries.Title)
+			}
+			if targetDir == "" {
+				libDir := downloader.ResolveDefaultLibraryDir()
+				found := downloader.FindSeriesDirectoryInLibrary(libDir, m.activeSeries.Title)
+				if found != "" {
+					targetDir = found
+				} else {
+					targetDir = filepath.Join(libDir, m.activeSeries.Title)
+				}
+			}
+			if targetDir != "" {
+				for _, ch := range m.chapters {
+					if existing := downloader.FindExistingChapterFile(targetDir, m.activeSeries, ch); existing != "" {
+						m.downloadedChapters[chapterKey(ch)] = existing
+					}
+				}
+				if len(m.downloadedChapters) > 0 {
+					m.statusMsg = fmt.Sprintf("Found %d chapters (%d already saved)", len(msg.chapters), len(m.downloadedChapters))
+				}
 			}
 		}
 
@@ -107,12 +134,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					item.Status = StatusFailed
 					item.ErrorMessage = msg.err.Error()
 					m.statusMsg = fmt.Sprintf("Download failed: %s (%v)", item.Chapter.Title, msg.err)
+				} else if msg.skipped {
+					item.Status = StatusCompleted
+					m.statusMsg = fmt.Sprintf("Already saved: %s (%s)", item.Chapter.Title, item.Series.Title)
 				} else {
 					item.Status = StatusCompleted
 					m.statusMsg = fmt.Sprintf("Downloaded: %s (%s)", item.Chapter.Title, item.Series.Title)
 				}
 				break
 			}
+		}
+		if msg.err == nil && msg.series.ID == m.activeSeries.ID && msg.path != "" {
+			if m.downloadedChapters == nil {
+				m.downloadedChapters = make(map[string]string)
+			}
+			m.downloadedChapters[chapterKey(msg.chapter)] = msg.path
 		}
 		nextModel, nextCmd := m.startNextDownload()
 		return nextModel, tea.Batch(dumpQueueAsyncCmd(m.queue), nextCmd)
@@ -433,12 +469,41 @@ func (m *Model) updateChapters(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedChapters[key] = !m.selectedChapters[key]
 		}
 	case "a", "tab":
-		// Select / Deselect all chapters
-		allSelected := len(m.selectedChapters) == len(m.chapters)
-		m.selectedChapters = make(map[string]bool)
-		if !allSelected {
-			for _, ch := range m.chapters {
-				m.selectedChapters[chapterKey(ch)] = true
+		// Select / Deselect missing (un-downloaded) chapters
+		var missingCount int
+		var missingSelected int
+		for _, ch := range m.chapters {
+			k := chapterKey(ch)
+			if m.downloadedChapters[k] == "" {
+				missingCount++
+				if m.selectedChapters[k] {
+					missingSelected++
+				}
+			}
+		}
+
+		if missingCount > 0 {
+			if missingSelected == missingCount {
+				// All missing chapters are currently selected -> deselect all
+				m.selectedChapters = make(map[string]bool)
+			} else {
+				// Select all missing chapters
+				m.selectedChapters = make(map[string]bool)
+				for _, ch := range m.chapters {
+					k := chapterKey(ch)
+					if m.downloadedChapters[k] == "" {
+						m.selectedChapters[k] = true
+					}
+				}
+			}
+		} else {
+			// All chapters are already downloaded: fallback to standard toggle all
+			allSelected := len(m.selectedChapters) == len(m.chapters)
+			m.selectedChapters = make(map[string]bool)
+			if !allSelected {
+				for _, ch := range m.chapters {
+					m.selectedChapters[chapterKey(ch)] = true
+				}
 			}
 		}
 	case "d", "enter":
@@ -505,47 +570,79 @@ func (m *Model) updateQueue(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.statusMsg = fmt.Sprintf("Resumed %d download(s)", resumed)
-		if !m.isDownloading {
-			return m.startNextDownload()
-		}
+		return m.startNextDownload()
 	}
 	return m, nil
 }
 
 func (m *Model) startNextDownload() (tea.Model, tea.Cmd) {
+	activePerProvider := make(map[string]int)
 	for _, item := range m.queue {
-		if item.Status == StatusQueued {
-			item.Status = StatusDownloading
-			m.isDownloading = true
-			targetItem := item
-			return m, func() tea.Msg {
-				outputDir := targetItem.OutputDir
-				if outputDir == "" {
-					outputDir = m.outputDir
-				}
-				seriesDir := targetItem.SeriesDir
-				if seriesDir == "" {
-					seriesDir = m.seriesDir
-				}
-				_, err := m.downloader.DownloadChapter(
-					m.ctx,
-					targetItem.Provider,
-					targetItem.Series,
-					targetItem.Chapter,
-					downloader.DownloadOptions{
-						OutputDir: outputDir,
-						SeriesDir: seriesDir,
-					},
-				)
-				return queueDownloadFinishedMsg{
-					itemID: targetItem.ID,
-					err:    err,
-				}
+		if item.Status == StatusDownloading && item.Provider != nil {
+			activePerProvider[item.Provider.ID()]++
+		}
+	}
+
+	var cmds []tea.Cmd
+	for _, item := range m.queue {
+		if item.Status == StatusQueued && item.Provider != nil {
+			provID := item.Provider.ID()
+			limit := m.downloader.ProviderWorkers(provID)
+			if activePerProvider[provID] < limit {
+				item.Status = StatusDownloading
+				activePerProvider[provID]++
+				targetItem := item
+				cmds = append(cmds, func() tea.Msg {
+					outputDir := targetItem.OutputDir
+					if outputDir == "" {
+						outputDir = m.outputDir
+					}
+					seriesDir := targetItem.SeriesDir
+					if seriesDir == "" {
+						seriesDir = m.seriesDir
+					}
+					res, err := m.downloader.DownloadChapter(
+						m.ctx,
+						targetItem.Provider,
+						targetItem.Series,
+						targetItem.Chapter,
+						downloader.DownloadOptions{
+							OutputDir: outputDir,
+							SeriesDir: seriesDir,
+						},
+					)
+					var skipped bool
+					var destPath string
+					if res != nil {
+						skipped = res.Skipped
+						destPath = res.FilePath
+					}
+					return queueDownloadFinishedMsg{
+						itemID:  targetItem.ID,
+						err:     err,
+						skipped: skipped,
+						path:    destPath,
+						chapter: targetItem.Chapter,
+						series:  targetItem.Series,
+					}
+				})
 			}
 		}
 	}
-	m.isDownloading = false
-	return m, nil
+
+	hasDownloading := false
+	for _, item := range m.queue {
+		if item.Status == StatusDownloading {
+			hasDownloading = true
+			break
+		}
+	}
+	m.isDownloading = hasDownloading
+
+	if len(cmds) == 0 {
+		return m, nil
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func (m *Model) performSearchCmd(query string) tea.Cmd {
