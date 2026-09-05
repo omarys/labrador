@@ -9,7 +9,11 @@ cd "$(dirname "$0")"
 
 echo "Building optimized Labrador binary..."
 mkdir -p bin
-go build -ldflags="-s -w" -o bin/labrador ./cmd/labrador
+BUILD_TAGS=""
+if [ -d "internal/providers/private" ]; then
+    BUILD_TAGS="-tags private"
+fi
+go build $BUILD_TAGS -ldflags="-s -w" -o bin/labrador ./cmd/labrador
 
 prefix="${LABRADOR_PREFIX:-}"
 

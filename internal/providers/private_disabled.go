@@ -1,4 +1,4 @@
-//go:build no_private
+//go:build !private
 
 package providers
 

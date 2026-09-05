@@ -17,6 +17,10 @@ run = "go test -race ./..."
 
 [tasks.build]
 description = "Build optimized Labrador binary into bin/"
+run = "if [ -d internal/providers/private ]; then go build -tags private -ldflags=\"-s -w\" -o bin/labrador ./cmd/labrador; else go build -ldflags=\"-s -w\" -o bin/labrador ./cmd/labrador; fi"
+
+[tasks.build-public]
+description = "Build Labrador binary with public providers only into bin/"
 run = "go build -ldflags=\"-s -w\" -o bin/labrador ./cmd/labrador"
 
 [tasks.in]

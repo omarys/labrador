@@ -1,7 +1,7 @@
 # Binaries and build outputs
 /bin/
 /dist/
-labrador
+/labrador
 
 # Private Providers (kept local, never pushed to git)
 /internal/providers/private/
