@@ -100,7 +100,7 @@ func (m *Model) viewProviders() string {
 }
 
 func (m *Model) renderTabs() string {
-	if m.activeProvider == nil {
+	if m.activeProvider == nil || !m.activeProvider.Capabilities().CanBrowse {
 		return ""
 	}
 
