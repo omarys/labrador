@@ -58,15 +58,27 @@ type DownloadResult struct {
 
 // ProviderThrottleState manages dynamic worker concurrency and throttling per provider.
 type ProviderThrottleState struct {
-	mu            sync.RWMutex
+	mu            sync.Mutex
 	workers       int
+	activeWorkers int
 	isThrottled   bool
 	lastThrottled time.Time
+	notifyCh      chan struct{}
+}
+
+func (s *ProviderThrottleState) initLocked() {
+	if s.workers == 0 {
+		s.workers = DefaultProviderWorkers
+	}
+	if s.notifyCh == nil {
+		s.notifyCh = make(chan struct{})
+	}
 }
 
 func (s *ProviderThrottleState) Workers() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.initLocked()
 	if s.isThrottled && time.Since(s.lastThrottled) >= ThrottleCooldown {
 		s.workers = DefaultProviderWorkers
 		s.isThrottled = false
@@ -77,6 +89,7 @@ func (s *ProviderThrottleState) Workers() int {
 func (s *ProviderThrottleState) IsThrottled() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.initLocked()
 	if s.isThrottled && time.Since(s.lastThrottled) >= ThrottleCooldown {
 		s.workers = DefaultProviderWorkers
 		s.isThrottled = false
@@ -87,16 +100,59 @@ func (s *ProviderThrottleState) IsThrottled() bool {
 func (s *ProviderThrottleState) MarkThrottled() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.initLocked()
 	s.workers = ThrottledProviderWorkers
 	s.isThrottled = true
 	s.lastThrottled = time.Now()
+	close(s.notifyCh)
+	s.notifyCh = make(chan struct{})
 }
 
 func (s *ProviderThrottleState) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.initLocked()
 	s.workers = DefaultProviderWorkers
 	s.isThrottled = false
+	close(s.notifyCh)
+	s.notifyCh = make(chan struct{})
+}
+
+// AcquireWorker waits until a worker slot is available and increments the active count.
+func (s *ProviderThrottleState) AcquireWorker(ctx context.Context) error {
+	for {
+		s.mu.Lock()
+		s.initLocked()
+		if s.isThrottled && time.Since(s.lastThrottled) >= ThrottleCooldown {
+			s.workers = DefaultProviderWorkers
+			s.isThrottled = false
+		}
+		if s.activeWorkers < s.workers {
+			s.activeWorkers++
+			s.mu.Unlock()
+			return nil
+		}
+		notify := s.notifyCh
+		s.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-notify:
+		}
+	}
+}
+
+// ReleaseWorker decrements the active worker count and signals waiting callers.
+func (s *ProviderThrottleState) ReleaseWorker() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.initLocked()
+	if s.activeWorkers > 0 {
+		s.activeWorkers--
+	}
+	close(s.notifyCh)
+	s.notifyCh = make(chan struct{})
 }
 
 // Downloader manages polite scraping, page fetching, dynamic worker pools, and archive creation.
@@ -285,11 +341,12 @@ func (d *Downloader) DownloadChapter(
 	}
 	defer sem.Release(weight)
 
-	workerCount := throttleState.Workers()
-
 	// 3. Discover chapter pages
 	pages, err := prov.GetPages(ctx, chapter)
 	if err != nil {
+		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "403") {
+			throttleState.MarkThrottled()
+		}
 		return nil, fmt.Errorf("getting chapter pages: %w", err)
 	}
 	if len(pages) == 0 {
@@ -299,12 +356,16 @@ func (d *Downloader) DownloadChapter(
 	// 4. Download page image bytes with a bounded per-provider worker pool
 	pageDataList := make([]archive.PageData, len(pages))
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(workerCount)
 
 	for i, p := range pages {
 		idx := i
 		page := p
 		g.Go(func() error {
+			if err := throttleState.AcquireWorker(gctx); err != nil {
+				return err
+			}
+			defer throttleState.ReleaseWorker()
+
 			data, err := d.fetchPageWithRetry(gctx, prov.ID(), page)
 			if err != nil {
 				return fmt.Errorf("page %d (%s): %w", page.Index, page.URL, err)
@@ -370,8 +431,8 @@ func (d *Downloader) fetchPageWithRetry(ctx context.Context, providerID string, 
 			continue
 		}
 
-		// Detect HTTP throttling (429 Too Many Requests, 503 Service Unavailable)
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		// Detect HTTP throttling (429 Too Many Requests, 503 Service Unavailable, 403 Forbidden)
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusForbidden {
 			retryHeader := resp.Header.Get("Retry-After")
 			_ = resp.Body.Close()
 
