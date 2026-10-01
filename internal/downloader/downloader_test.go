@@ -3,6 +3,7 @@ package downloader_test
 import (
 	"archive/zip"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -262,6 +263,170 @@ func TestDownloader_ThrottleBackoff(t *testing.T) {
 	}
 	if w := dl.ProviderWorkers(prov.ID()); w != 1 {
 		t.Errorf("expected provider workers to back off to 1, got %d", w)
+	}
+}
+
+func TestDownloader_DynamicPageConcurrency_ThrottledBackoff(t *testing.T) {
+	var activeReqs int32
+	var completedReqs int32
+	var throttledOnce int32
+	var maxActiveAfterDrain int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cur := atomic.AddInt32(&activeReqs, 1)
+		defer func() {
+			atomic.AddInt32(&activeReqs, -1)
+			atomic.AddInt32(&completedReqs, 1)
+		}()
+
+		// The very first request is throttled with HTTP 429
+		if atomic.CompareAndSwapInt32(&throttledOnce, 0, 1) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+
+		// Once initial wave (at most 3 concurrent requests) has completed,
+		// all subsequent requests must be strictly serialized (activeReqs <= 1)
+		if atomic.LoadInt32(&completedReqs) >= 3 {
+			for {
+				old := atomic.LoadInt32(&maxActiveAfterDrain)
+				if cur <= old || atomic.CompareAndSwapInt32(&maxActiveAfterDrain, old, cur) {
+					break
+				}
+			}
+		}
+
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\nfake-image-bytes"))
+	}))
+	defer ts.Close()
+
+	pages := make([]domain.Page, 8)
+	for i := 0; i < 8; i++ {
+		pages[i] = domain.Page{
+			Index: i,
+			URL:   fmt.Sprintf("%s/p%d.png", ts.URL, i),
+		}
+	}
+
+	prov := &mockProv{
+		id:    "dynamic-page-prov",
+		pages: pages,
+	}
+
+	dl := downloader.New(ts.Client())
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "dynamic.cbz")
+
+	_, err := dl.DownloadChapter(context.Background(), prov, domain.Series{Title: "S"}, domain.Chapter{Title: "C"}, downloader.DownloadOptions{
+		OutputFile: outPath,
+	})
+	if err != nil {
+		t.Fatalf("DownloadChapter failed: %v", err)
+	}
+
+	if !dl.IsProviderThrottled(prov.ID()) {
+		t.Errorf("expected provider to be marked as throttled")
+	}
+
+	// Pages dispatched after throttle backoff must be strictly serialized to 1 worker
+	if max := atomic.LoadInt32(&maxActiveAfterDrain); max > 1 {
+		t.Errorf("expected max concurrency for post-throttle pages to be 1, got %d", max)
+	}
+}
+
+func TestDownloader_DynamicPageConcurrency_PreThrottled(t *testing.T) {
+	var activeReqs int32
+	var maxActive int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cur := atomic.AddInt32(&activeReqs, 1)
+		defer atomic.AddInt32(&activeReqs, -1)
+
+		for {
+			old := atomic.LoadInt32(&maxActive)
+			if cur <= old || atomic.CompareAndSwapInt32(&maxActive, old, cur) {
+				break
+			}
+		}
+
+		time.Sleep(15 * time.Millisecond)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\nfake-image-bytes"))
+	}))
+	defer ts.Close()
+
+	pages := make([]domain.Page, 6)
+	for i := 0; i < 6; i++ {
+		pages[i] = domain.Page{
+			Index: i,
+			URL:   fmt.Sprintf("%s/page%d.png", ts.URL, i),
+		}
+	}
+
+	prov := &mockProv{
+		id:    "prethrottled-prov",
+		pages: pages,
+	}
+
+	dl := downloader.New(ts.Client())
+	// Pre-throttle the provider
+	dl.GetProviderThrottleState(prov.ID()).MarkThrottled()
+
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "prethrottled.cbz")
+
+	_, err := dl.DownloadChapter(context.Background(), prov, domain.Series{Title: "S"}, domain.Chapter{Title: "C"}, downloader.DownloadOptions{
+		OutputFile: outPath,
+	})
+	if err != nil {
+		t.Fatalf("DownloadChapter failed: %v", err)
+	}
+
+	if max := atomic.LoadInt32(&maxActive); max > 1 {
+		t.Errorf("expected strictly 1 concurrent worker when pre-throttled, got %d", max)
+	}
+}
+
+func TestDownloader_Throttled_HTTP403(t *testing.T) {
+	var attempts int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cur := atomic.AddInt32(&attempts, 1)
+		if cur == 1 {
+			// First attempt fails with 403 Forbidden (e.g. rate-limit or hotlink block)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\nfake-image-bytes"))
+	}))
+	defer ts.Close()
+
+	prov := &mockProv{
+		id: "prov-403",
+		pages: []domain.Page{
+			{Index: 0, URL: ts.URL + "/page0.png"},
+		},
+	}
+
+	dl := downloader.New(ts.Client())
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "test403.cbz")
+
+	_, err := dl.DownloadChapter(context.Background(), prov, domain.Series{Title: "S"}, domain.Chapter{Title: "C"}, downloader.DownloadOptions{
+		OutputFile: outPath,
+	})
+	if err != nil {
+		t.Fatalf("DownloadChapter should succeed after retry on 403: %v", err)
+	}
+
+	if !dl.IsProviderThrottled(prov.ID()) {
+		t.Errorf("expected provider to be marked as throttled after 403")
+	}
+	if w := dl.ProviderWorkers(prov.ID()); w != 1 {
+		t.Errorf("expected provider workers to back off to 1 after 403, got %d", w)
 	}
 }
 
