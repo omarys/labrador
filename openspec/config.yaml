@@ -1,0 +1,25 @@
+schema: spec-driven
+openlore:
+  version: 1.2.0
+  generatedAt: 2026-10-07T20:16:31.880Z
+  domains:
+    - archive
+    - cli
+    - domain
+    - downloader
+    - httpclient
+    - labrador
+    - lessons
+    - provider
+    - providers
+    - tui
+  confidence: 0.95
+context: >-
+  # Auto-detected by openlore
+
+  Tech stack: Go, Bubbletea
+
+  Architecture: Layered (routes → controllers → services → repositories)
+
+  Domains: agents, archive, cli, domain, downloader, httpclient, labrador, lessons, provider,
+  providers, tui

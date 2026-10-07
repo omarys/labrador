@@ -1,0 +1,145 @@
+{
+  "generatedAt": "2026-10-07T20:16:31.905Z",
+  "specVersion": "1.0.0",
+  "domains": [
+    {
+      "domain": "archive",
+      "specPath": "openspec/specs/archive/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/internal/archive/archive_test.go",
+        "/home/omary/Dev/labrador/internal/archive/cbz.go",
+        "/home/omary/Dev/labrador/internal/archive/comicinfo.go"
+      ],
+      "requirementCount": 2,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "cli",
+      "specPath": "openspec/specs/cli/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/internal/cli/cli_test.go",
+        "/home/omary/Dev/labrador/internal/cli/cli.go"
+      ],
+      "requirementCount": 9,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "domain",
+      "specPath": "openspec/specs/domain/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/internal/domain/chapter_test.go",
+        "/home/omary/Dev/labrador/internal/domain/chapter.go",
+        "/home/omary/Dev/labrador/internal/domain/page.go",
+        "/home/omary/Dev/labrador/internal/domain/series.go",
+        "/home/omary/Dev/labrador/internal/domain/sort.go",
+        "/home/omary/Dev/labrador/internal/domain/tag.go"
+      ],
+      "requirementCount": 3,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "downloader",
+      "specPath": "openspec/specs/downloader/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/internal/downloader/library.go",
+        "/home/omary/Dev/labrador/internal/downloader/downloader_test.go",
+        "/home/omary/Dev/labrador/internal/downloader/downloader.go"
+      ],
+      "requirementCount": 10,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "httpclient",
+      "specPath": "openspec/specs/httpclient/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/internal/httpclient/config.go",
+        "/home/omary/Dev/labrador/internal/httpclient/config_test.go",
+        "/home/omary/Dev/labrador/internal/httpclient/address_policy_test.go",
+        "/home/omary/Dev/labrador/internal/httpclient/client_test.go",
+        "/home/omary/Dev/labrador/internal/httpclient/client.go",
+        "/home/omary/Dev/labrador/internal/httpclient/dialer_test.go",
+        "/home/omary/Dev/labrador/internal/httpclient/dialer.go",
+        "/home/omary/Dev/labrador/internal/httpclient/resolver_test.go",
+        "/home/omary/Dev/labrador/internal/httpclient/transport_test.go",
+        "/home/omary/Dev/labrador/internal/httpclient/url_policy_test.go",
+        "/home/omary/Dev/labrador/internal/httpclient/url_policy.go",
+        "/home/omary/Dev/labrador/internal/httpclient/address_policy.go",
+        "/home/omary/Dev/labrador/internal/httpclient/network_dialer_test.go",
+        "/home/omary/Dev/labrador/internal/httpclient/network_dialer.go",
+        "/home/omary/Dev/labrador/internal/httpclient/resolver.go",
+        "/home/omary/Dev/labrador/internal/httpclient/transport.go"
+      ],
+      "requirementCount": 1,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "labrador",
+      "specPath": "openspec/specs/labrador/spec.md",
+      "sourceFiles": [],
+      "requirementCount": 1,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "lessons",
+      "specPath": "openspec/specs/lessons/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/lessons/0002-concrete-provider-and-html-scraping.html",
+        "/home/omary/Dev/labrador/lessons/0001-provider-interface-and-registry.html",
+        "/home/omary/Dev/labrador/lessons/0003-cbz-archives-and-comicinfo-xml.html",
+        "/home/omary/Dev/labrador/lessons/0004-polite-concurrency-and-download-queues.html",
+        "/home/omary/Dev/labrador/lessons/0005-headless-cli-and-dewey-json-contract.html",
+        "/home/omary/Dev/labrador/lessons/0006-interactive-bubbletea-tui.html"
+      ],
+      "requirementCount": 3,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "provider",
+      "specPath": "openspec/specs/provider/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/internal/provider/provider.go",
+        "/home/omary/Dev/labrador/internal/provider/registry_test.go",
+        "/home/omary/Dev/labrador/internal/provider/registry.go"
+      ],
+      "requirementCount": 5,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "providers",
+      "specPath": "openspec/specs/providers/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/internal/providers/providers.go",
+        "/home/omary/Dev/labrador/internal/providers/private_disabled.go",
+        "/home/omary/Dev/labrador/internal/providers/private_enabled.go"
+      ],
+      "requirementCount": 57,
+      "dependsOn": [],
+      "calledBy": []
+    },
+    {
+      "domain": "tui",
+      "specPath": "openspec/specs/tui/spec.md",
+      "sourceFiles": [
+        "/home/omary/Dev/labrador/internal/tui/model.go",
+        "/home/omary/Dev/labrador/internal/tui/mouse.go",
+        "/home/omary/Dev/labrador/internal/tui/persistence.go",
+        "/home/omary/Dev/labrador/internal/tui/styles.go",
+        "/home/omary/Dev/labrador/internal/tui/tui_test.go",
+        "/home/omary/Dev/labrador/internal/tui/tui.go",
+        "/home/omary/Dev/labrador/internal/tui/update.go",
+        "/home/omary/Dev/labrador/internal/tui/view.go"
+      ],
+      "requirementCount": 37,
+      "dependsOn": [],
+      "calledBy": []
+    }
+  ]
+}

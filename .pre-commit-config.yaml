@@ -26,7 +26,9 @@ repos:
 
       - id: go-mod-tidy
         name: go mod tidy is clean
-        entry: go mod tidy -diff
+        # -e tolerates the build-tagged imports of the gitignored private
+        # provider packages; genuine go.mod/go.sum drift still fails (exit 1).
+        entry: go mod tidy -e -diff
         language: system
         files: ^go\.(mod|sum)$
         pass_filenames: false

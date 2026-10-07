@@ -12,3 +12,6 @@
 *.log
 *.cbz
 *.zip
+
+# openlore analysis artifacts
+.openlore/
