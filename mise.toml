@@ -1,7 +1,7 @@
 [tools]
-go = "1.27.1"
-golangci-lint = "2.14.0"
-pre-commit = "4.6.2"
+go = "1.27.2"
+golangci-lint = "2.15.0"
+pre-commit = "4.7.0"
 
 [tasks.update]
 description = "Update Go module dependencies"
