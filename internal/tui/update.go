@@ -87,6 +87,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textInput.Blur()
 		}
 
+	case tagsResultMsg:
+		if msg.err != nil {
+			m.tagPickerOpen = false
+			m.statusMsg = "Tags unavailable: " + msg.err.Error()
+			return m, nil
+		}
+		if m.tagsCache == nil {
+			m.tagsCache = make(map[string][]domain.Tag)
+		}
+		m.tagsCache[msg.providerID] = msg.tags
+		if m.activeProvider != nil && m.activeProvider.ID() == msg.providerID {
+			m.tags = msg.tags
+			m.tagCursor = 0
+			m.tagPickerOpen = true
+		}
+
 	case chaptersResultMsg:
 		m.isLoading = false
 		if msg.err != nil {
@@ -199,10 +215,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "esc":
+			if m.tagPickerOpen {
+				// The genre overlay swallows Esc instead of navigating back a screen.
+				m.tagPickerOpen = false
+				return m, nil
+			}
 			if m.textInput.Focused() {
 				m.textInput.Blur()
 			} else if m.selectMode {
-				return m, tea.Quit
+				// Select mode starts on the provider screen, so the only way back is
+				// out: step back through the search screen first, then quit.
+				if m.screen == screenProviders {
+					return m, tea.Quit
+				}
+				return m.handleBack()
 			} else if m.screen == screenQueue {
 				m.screen = m.previousScreen
 				return m, nil
@@ -285,16 +311,28 @@ func (m *Model) updateProviders(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(selected) > 1 {
 			// Multi-provider: go directly to unified search
 			m.activeProvider = nil
-			m.screen = screenSearch
-			m.textInput.Blur()
-			return m, nil
+		} else if len(selected) == 1 {
+			// Single provider: open tabbed view for the one the user checked
+			m.activeProvider = selected[0]
+		} else {
+			// Nothing checked: fall back to the provider under the cursor
+			m.activeProvider = m.providers[m.providerCursor]
 		}
 
-		// Single provider: open tabbed view
-		m.activeProvider = m.providers[m.providerCursor]
 		m.screen = screenSearch
-		m.activeTab = tabSearch
+		if m.activeProvider != nil {
+			m.activeTab = tabSearch
+		}
 		m.textInput.Blur()
+
+		// Select mode arrives with a pre-filled query (`select --query`), so the
+		// user only picks providers here and the search starts immediately.
+		if m.selectMode {
+			if q := strings.TrimSpace(m.textInput.Value()); q != "" {
+				m.isLoading = true
+				return m, m.performSearchCmd(q)
+			}
+		}
 		return m, nil
 	}
 	return m, nil
@@ -319,6 +357,34 @@ func (m *Model) updateSearchBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.textInput, cmd = m.textInput.Update(msg)
 		return m, cmd
+	}
+
+	// TAG PICKER MODE: navigation is captured while the genre overlay is visible
+	// (Esc is handled by the global key handler above).
+	if m.tagPickerOpen {
+		switch msg.String() {
+		case "j", "down", "ctrl+n":
+			if m.tagCursor < len(m.tags)-1 {
+				m.tagCursor++
+			}
+		case "k", "up", "ctrl+p":
+			if m.tagCursor > 0 {
+				m.tagCursor--
+			}
+		case "enter":
+			if len(m.tags) > 0 {
+				m.activeTag = &m.tags[m.tagCursor]
+				m.tagPickerOpen = false
+				m.isLoading = true
+				return m, m.performBrowseCmd()
+			}
+		case "a":
+			m.activeTag = nil
+			m.tagPickerOpen = false
+			m.isLoading = true
+			return m, m.performBrowseCmd()
+		}
+		return m, nil
 	}
 
 	// NORMAL NAVIGATION MODE:
@@ -369,13 +435,29 @@ func (m *Model) updateSearchBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.performBrowseCmd()
 		}
 	case "s":
-		// Toggle Popular / Recent sort in Browse tab
+		// Cycle through the sorts the active provider supports
 		if m.activeTab == tabBrowse && m.activeProvider != nil {
-			if m.browseSort == domain.SortPopular {
-				m.browseSort = domain.SortRecent
-			} else {
-				m.browseSort = domain.SortPopular
+			m.cycleBrowseSort()
+			m.isLoading = true
+			return m, m.performBrowseCmd()
+		}
+
+	case "t":
+		// Open the genre picker, fetching the provider's tag list on first use
+		if m.activeTab == tabBrowse && m.activeProvider != nil && m.activeProvider.Capabilities().HasTags {
+			if cached, ok := m.tagsCache[m.activeProvider.ID()]; ok {
+				m.tags = cached
+				m.tagCursor = 0
+				m.tagPickerOpen = true
+				return m, nil
 			}
+			return m, m.fetchTagsCmd(m.activeProvider)
+		}
+
+	case "a":
+		// Quick "all genres" shortcut while a tag filter is applied
+		if m.activeTab == tabBrowse && m.activeTag != nil {
+			m.activeTag = nil
 			m.isLoading = true
 			return m, m.performBrowseCmd()
 		}
@@ -699,6 +781,7 @@ func (m *Model) performBrowseCmd() tea.Cmd {
 		}
 
 		seriesList, err := m.activeProvider.Browse(m.ctx, provider.BrowseOptions{
+			Tag:  m.activeTag,
 			Sort: m.browseSort,
 			Page: 1,
 		})
@@ -717,6 +800,27 @@ func (m *Model) performBrowseCmd() tea.Cmd {
 	}
 }
 
+// cycleBrowseSort advances m.browseSort to the next order the active provider
+// supports, wrapping to the first one. Providers that declare no sorts fall back
+// to the Popular/Recent pair.
+func (m *Model) cycleBrowseSort() {
+	sorts := []domain.SortOrder{domain.SortPopular, domain.SortRecent}
+	if m.activeProvider != nil {
+		if declared := m.activeProvider.Capabilities().SupportedSorts; len(declared) > 0 {
+			sorts = declared
+		}
+	}
+
+	next := sorts[0]
+	for i, s := range sorts {
+		if s == m.browseSort {
+			next = sorts[(i+1)%len(sorts)]
+			break
+		}
+	}
+	m.browseSort = next
+}
+
 func (m *Model) fetchChaptersCmd(p provider.Provider, s domain.Series) tea.Cmd {
 	cacheKey := fmt.Sprintf("%s:%s", p.ID(), s.ID)
 	if cached, ok := m.chapterCache[cacheKey]; ok && len(cached) > 0 {
@@ -728,5 +832,12 @@ func (m *Model) fetchChaptersCmd(p provider.Provider, s domain.Series) tea.Cmd {
 	return func() tea.Msg {
 		chapters, er := p.GetChapters(m.ctx, s)
 		return chaptersResultMsg{chapters: chapters, err: er, cacheKey: cacheKey}
+	}
+}
+
+func (m *Model) fetchTagsCmd(p provider.Provider) tea.Cmd {
+	return func() tea.Msg {
+		tags, er := p.GetTags(m.ctx)
+		return tagsResultMsg{providerID: p.ID(), tags: tags, err: er}
 	}
 }

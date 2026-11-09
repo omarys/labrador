@@ -63,6 +63,12 @@ type chaptersResultMsg struct {
 	cacheKey string
 }
 
+type tagsResultMsg struct {
+	providerID string
+	tags       []domain.Tag
+	err        error
+}
+
 type providerSearchChunkMsg struct {
 	provider provider.Provider
 	results  []domain.Series
@@ -110,7 +116,13 @@ type Model struct {
 	// Search & Browse state
 	searchResults []searchResultItem
 	searchCursor  int
-	browseSort    domain.SortOrder // SortPopular or SortRecent
+	browseSort    domain.SortOrder // one of the active provider's SupportedSorts
+
+	tags          []domain.Tag // genre/tag list for the active provider
+	tagCursor     int
+	activeTag     *domain.Tag             // nil = no tag filter (all genres)
+	tagPickerOpen bool                    // tag picker overlay visible
+	tagsCache     map[string][]domain.Tag // providerID -> tags (lazily initialized)
 
 	// Chapter screen state
 	activeSeries     domain.Series
@@ -199,39 +211,58 @@ func NewModel(reg *provider.Registry, dl *downloader.Downloader, ctx context.Con
 	}
 }
 
-// NewSelectModel initializes the model in selectMode searching user preferred providers for query.
-func NewSelectModel(reg *provider.Registry, dl *downloader.Downloader, ctx context.Context, cancel context.CancelFunc, query string) Model {
+// NewSelectModel initializes the model in selectMode. It opens on the provider
+// screen so the caller's user can choose which providers to search; preselected
+// provider ids are pre-checked, and when none of them match (or the list is
+// empty) the default set is used.
+func NewSelectModel(reg *provider.Registry, dl *downloader.Downloader, ctx context.Context, cancel context.CancelFunc, query string, preselected []string) Model {
 	m := NewModel(reg, dl, ctx, cancel)
 	m.selectMode = true
-	m.screen = screenSearch
+	m.screen = screenProviders
+	m.previousScreen = screenProviders
 	m.activeTab = tabSearch
-	if query != "" {
-		m.textInput.SetValue(query)
-		m.textInput.Blur()
-		m.isLoading = true
-	} else {
-		m.textInput.SetValue("")
-		m.textInput.Focus()
-		m.isLoading = false
+	m.textInput.SetValue(query)
+	m.textInput.Blur()
+	m.isLoading = false
+
+	searchable := func(p provider.Provider) bool { return p.Capabilities().CanSearch }
+
+	m.selectedProviders = make(map[string]bool)
+	for _, id := range preselected {
+		for _, p := range m.providers {
+			if p.ID() == id && searchable(p) {
+				m.selectedProviders[p.ID()] = true
+			}
+		}
 	}
 
-	preferred := map[string]bool{
-		"mangakatana":     true,
-		"mangadistrict":   true,
-		"private_gallery": true,
-		"weebcentral":     true,
-	}
-	m.selectedProviders = make(map[string]bool)
-	for _, p := range m.providers {
-		if preferred[p.ID()] && p.Capabilities().CanSearch {
-			m.selectedProviders[p.ID()] = true
+	if len(m.selectedProviders) == 0 {
+		preferred := map[string]bool{
+			"mangakatana":     true,
+			"mangadistrict":   true,
+			"private_gallery": true,
+			"weebcentral":     true,
+		}
+		for _, p := range m.providers {
+			if preferred[p.ID()] && searchable(p) {
+				m.selectedProviders[p.ID()] = true
+			}
 		}
 	}
 	if len(m.selectedProviders) == 0 {
 		for _, p := range m.providers {
-			if p.Capabilities().CanSearch {
+			if searchable(p) {
 				m.selectedProviders[p.ID()] = true
 			}
+		}
+	}
+
+	// Park the cursor on the first checked provider so Enter acts on something
+	// the user can see.
+	for i, p := range m.providers {
+		if m.selectedProviders[p.ID()] {
+			m.providerCursor = i
+			break
 		}
 	}
 

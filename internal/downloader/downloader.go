@@ -33,10 +33,11 @@ var (
 
 // DownloadOptions configures destination paths for downloads.
 type DownloadOptions struct {
-	OutputDir  string // Directory to write <Series>/<Chapter>.cbz
-	SeriesDir  string // Explicit series directory (writes <Chapter>.cbz directly inside it, no extra subfolder)
-	OutputFile string // Explicit file path (overrides OutputDir)
-	Force      bool   // Overwrite existing .cbz files instead of skipping
+	OutputDir  string           // Directory to write <Series>/<Chapter>.cbz (or .md for text media)
+	SeriesDir  string           // Explicit series directory (writes the chapter file directly inside it, no extra subfolder)
+	OutputFile string           // Explicit file path (overrides OutputDir)
+	Force      bool             // Overwrite existing files instead of skipping
+	Media      domain.MediaType // Set from the provider's capabilities; empty means domain.MediaImage
 }
 
 // DownloadResult returns machine-readable details for Dewey and the CLI.
@@ -213,10 +214,16 @@ func (d *Downloader) IsProviderThrottled(providerID string) bool {
 	return d.GetProviderThrottleState(providerID).IsThrottled()
 }
 
-// ResolveDestinationPath determines the target .cbz path for a chapter without downloading it.
+// ResolveDestinationPath determines the target archive path for a chapter without downloading it.
+// Text media (light novels) resolve to .md; everything else resolves to .cbz.
 func ResolveDestinationPath(series domain.Series, chapter domain.Chapter, opts DownloadOptions) string {
 	if opts.OutputFile != "" {
 		return opts.OutputFile
+	}
+
+	ext := ".cbz"
+	if opts.Media == domain.MediaText {
+		ext = ".md"
 	}
 
 	sanitizedSeries := sanitizeFilename(series.Title)
@@ -224,7 +231,7 @@ func ResolveDestinationPath(series domain.Series, chapter domain.Chapter, opts D
 	if sanitizedChapter == "" {
 		sanitizedChapter = fmt.Sprintf("Chapter_%d", chapter.Index)
 	}
-	filename := fmt.Sprintf("%s - %s.cbz", sanitizedSeries, sanitizedChapter)
+	filename := fmt.Sprintf("%s - %s%s", sanitizedSeries, sanitizedChapter, ext)
 
 	if opts.SeriesDir != "" {
 		return filepath.Join(opts.SeriesDir, filename)
@@ -244,6 +251,15 @@ func ResolveDestinationPath(series domain.Series, chapter domain.Chapter, opts D
 	}
 
 	return filepath.Join(libDir, sanitizedSeries, filename)
+}
+
+// countChapterPages reports how many pages a downloaded chapter contains. A
+// prose chapter is a single Markdown file, so it counts as one page.
+func countChapterPages(path string) int {
+	if strings.EqualFold(filepath.Ext(path), ".md") {
+		return 1
+	}
+	return countArchivePages(path)
 }
 
 func countArchivePages(cbzPath string) int {
@@ -275,6 +291,8 @@ func (d *Downloader) DownloadChapter(
 		return nil, fmt.Errorf("provider cannot be nil")
 	}
 
+	opts.Media = prov.Capabilities().Media
+
 	// 1. Determine destination path and check for existing download
 	destPath := ResolveDestinationPath(series, chapter, opts)
 	absPath, err := filepath.Abs(destPath)
@@ -302,7 +320,7 @@ func (d *Downloader) DownloadChapter(
 				ChapterURL:     chapter.URL,
 				FetchURL:       chapter.URL,
 				FilePath:       absExisting,
-				PageCount:      countArchivePages(destPath),
+				PageCount:      countChapterPages(destPath),
 				Skipped:        true,
 			}, nil
 		}
@@ -321,7 +339,7 @@ func (d *Downloader) DownloadChapter(
 				ChapterURL:     chapter.URL,
 				FetchURL:       chapter.URL,
 				FilePath:       absExisting,
-				PageCount:      countArchivePages(existingFile),
+				PageCount:      countChapterPages(existingFile),
 				Skipped:        true,
 			}, nil
 		}
@@ -341,7 +359,12 @@ func (d *Downloader) DownloadChapter(
 	}
 	defer sem.Release(weight)
 
-	// 3. Discover chapter pages
+	// 3. Prose media skips page discovery entirely: one HTTP fetch, one .md file.
+	if opts.Media == domain.MediaText {
+		return d.downloadTextChapter(ctx, prov, series, chapter, destPath, absPath, throttleState)
+	}
+
+	// 4. Discover chapter pages
 	pages, err := prov.GetPages(ctx, chapter)
 	if err != nil {
 		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "403") {
@@ -353,7 +376,7 @@ func (d *Downloader) DownloadChapter(
 		return nil, fmt.Errorf("no pages found for chapter %s", chapter.ID)
 	}
 
-	// 4. Download page image bytes with a bounded per-provider worker pool
+	// 5. Download page image bytes with a bounded per-provider worker pool
 	pageDataList := make([]archive.PageData, len(pages))
 	g, gctx := errgroup.WithContext(ctx)
 
@@ -379,7 +402,7 @@ func (d *Downloader) DownloadChapter(
 		return nil, fmt.Errorf("downloading pages: %w", err)
 	}
 
-	// 5. Build .cbz archive
+	// 6. Build .cbz archive
 	if err := archive.WriteCBZ(destPath, series, chapter, pageDataList); err != nil {
 		return nil, fmt.Errorf("writing CBZ: %w", err)
 	}
@@ -397,6 +420,55 @@ func (d *Downloader) DownloadChapter(
 		FetchURL:       chapter.URL,
 		FilePath:       absPath,
 		PageCount:      len(pageDataList),
+	}, nil
+}
+
+// downloadTextChapter fetches a prose chapter and writes it as a .md file.
+// It assumes the provider-level semaphore slot is already held by DownloadChapter.
+func (d *Downloader) downloadTextChapter(
+	ctx context.Context,
+	prov provider.Provider,
+	series domain.Series,
+	chapter domain.Chapter,
+	destPath string,
+	absPath string,
+	throttleState *ProviderThrottleState,
+) (*DownloadResult, error) {
+	textProv, ok := prov.(provider.TextProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s declares text media but does not implement provider.TextProvider", prov.ID())
+	}
+
+	if err := throttleState.AcquireWorker(ctx); err != nil {
+		return nil, fmt.Errorf("acquiring worker slot for provider %s: %w", prov.ID(), err)
+	}
+	defer throttleState.ReleaseWorker()
+
+	body, err := textProv.GetChapterText(ctx, chapter)
+	if err != nil {
+		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "403") {
+			throttleState.MarkThrottled()
+		}
+		return nil, fmt.Errorf("getting chapter text: %w", err)
+	}
+
+	if err := archive.WriteText(destPath, series, chapter, body); err != nil {
+		return nil, fmt.Errorf("writing text chapter: %w", err)
+	}
+
+	return &DownloadResult{
+		ProviderID:     prov.ID(),
+		SeriesID:       series.ID,
+		SeriesTitle:    series.Title,
+		SeriesURL:      series.URL,
+		SeriesFetchURL: series.URL,
+		ChapterID:      chapter.ID,
+		ChapterTitle:   chapter.Title,
+		ChapterNumber:  chapter.Number,
+		ChapterURL:     chapter.URL,
+		FetchURL:       chapter.URL,
+		FilePath:       absPath,
+		PageCount:      1,
 	}, nil
 }
 

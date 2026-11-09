@@ -12,6 +12,14 @@ type Capabilities struct {
 	CanBrowse      bool               `json:"can_browse"`
 	SupportedSorts []domain.SortOrder `json:"supported_sorts,omitempty"`
 	HasTags        bool               `json:"has_tags"`
+	// Media declares how chapters are archived. Empty means domain.MediaImage.
+	Media domain.MediaType `json:"media,omitempty"`
+}
+
+// IsText reports whether this provider's chapters are prose rather than page
+// images, and must therefore be downloaded as plain text.
+func (c Capabilities) IsText() bool {
+	return c.Media == domain.MediaText
 }
 
 // BrowseOptions defines parameters for browsing a Provider catalog.
@@ -49,4 +57,15 @@ type Provider interface {
 
 	// GetPages returns the ordered list of image pages for a given chapter.
 	GetPages(ctx context.Context, chapter domain.Chapter) ([]domain.Page, error)
+}
+
+// TextProvider is implemented by providers whose chapters are prose rather than
+// page images (light novels). A provider that declares domain.MediaText in its
+// Capabilities must also implement this interface.
+type TextProvider interface {
+	// GetChapterText returns the chapter body as Markdown: paragraphs separated
+	// by one blank line, with inline emphasis as *emphasis*, **strong**, and
+	// [text](url) links. The writer that persists the chapter prepends the
+	// heading, so providers must not emit one.
+	GetChapterText(ctx context.Context, chapter domain.Chapter) (string, error)
 }

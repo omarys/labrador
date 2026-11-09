@@ -17,17 +17,25 @@ import (
 )
 
 type cliMockProv struct {
-	id      string
-	name    string
-	domain  string
-	baseURL string
-	series  []domain.Series
+	id             string
+	name           string
+	domain         string
+	baseURL        string
+	series         []domain.Series
+	supportedSorts []domain.SortOrder
+	hasTags        bool
+	tags           []domain.Tag
 }
 
 func (m *cliMockProv) ID() string   { return m.id }
 func (m *cliMockProv) Name() string { return m.name }
 func (m *cliMockProv) Capabilities() provider.Capabilities {
-	return provider.Capabilities{CanSearch: true, CanBrowse: true}
+	return provider.Capabilities{
+		CanSearch:      true,
+		CanBrowse:      true,
+		SupportedSorts: m.supportedSorts,
+		HasTags:        m.hasTags,
+	}
 }
 
 func (m *cliMockProv) MatchesURL(rawURL string) bool {
@@ -43,7 +51,7 @@ func (m *cliMockProv) Browse(_ context.Context, _ provider.BrowseOptions) ([]dom
 }
 
 func (m *cliMockProv) GetTags(_ context.Context) ([]domain.Tag, error) {
-	return nil, nil
+	return m.tags, nil
 }
 
 func (m *cliMockProv) GetChapters(_ context.Context, _ domain.Series) ([]domain.Chapter, error) {
@@ -340,5 +348,98 @@ func TestCLI_Resume(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "Resuming 1 download(s)") {
 		t.Errorf("expected output to mention resuming 1 download, got: %s", stdout.String())
+	}
+}
+
+func newTagMockProv() *cliMockProv {
+	return &cliMockProv{
+		id:             "novelping",
+		name:           "NovelPing",
+		domain:         "novelping.com",
+		supportedSorts: []domain.SortOrder{domain.SortPopular, domain.SortRecent},
+		hasTags:        true,
+		tags: []domain.Tag{
+			{ID: "fantasy", Label: "Fantasy"},
+			{ID: "sci-fi", Label: "Sci-fi"},
+		},
+	}
+}
+
+func TestCLI_Tags_JSON(t *testing.T) {
+	reg := provider.NewRegistry()
+	_ = reg.Register(newTagMockProv())
+
+	stdout := &bytes.Buffer{}
+	app := &cli.App{
+		Registry:   reg,
+		Downloader: downloader.New(nil),
+		Stdout:     stdout,
+		Stderr:     &bytes.Buffer{},
+	}
+
+	if err := app.Run(context.Background(), []string{"tags", "--provider", "novelping", "--json"}); err != nil {
+		t.Fatalf("tags --json failed: %v", err)
+	}
+
+	var tags []domain.Tag
+	if err := json.Unmarshal(stdout.Bytes(), &tags); err != nil {
+		t.Fatalf("failed to parse stdout as JSON: %v (stdout: %s)", err, stdout.String())
+	}
+	if len(tags) != 2 || tags[0].ID != "fantasy" || tags[0].Label != "Fantasy" {
+		t.Errorf("unexpected tags: %+v", tags)
+	}
+}
+
+func TestCLI_Tags_RejectsProviderWithoutTags(t *testing.T) {
+	reg := provider.NewRegistry()
+	_ = reg.Register(&cliMockProv{id: "weebcentral", name: "WeebCentral", domain: "weebcentral.com"})
+
+	app := &cli.App{
+		Registry:   reg,
+		Downloader: downloader.New(nil),
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+	}
+
+	err := app.Run(context.Background(), []string{"tags", "--provider", "weebcentral"})
+	if err == nil || !strings.Contains(err.Error(), "does not support tag filtering") {
+		t.Fatalf("expected a tag-filtering error, got %v", err)
+	}
+}
+
+func TestCLI_Browse_RejectsUnsupportedSort(t *testing.T) {
+	reg := provider.NewRegistry()
+	_ = reg.Register(newTagMockProv())
+
+	app := &cli.App{
+		Registry:   reg,
+		Downloader: downloader.New(nil),
+		Stdout:     &bytes.Buffer{},
+		Stderr:     &bytes.Buffer{},
+	}
+
+	err := app.Run(context.Background(), []string{"browse", "--provider", "novelping", "--sort", "alphabetical"})
+	if err == nil || !strings.Contains(err.Error(), "not supported by provider novelping") {
+		t.Fatalf("expected an unsupported-sort error, got %v", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "popular, recent") {
+		t.Errorf("error should list the supported sorts, got: %v", err)
+	}
+}
+
+func TestCLI_Browse_AcceptsSupportedSort(t *testing.T) {
+	reg := provider.NewRegistry()
+	_ = reg.Register(newTagMockProv())
+
+	stdout := &bytes.Buffer{}
+	app := &cli.App{
+		Registry:   reg,
+		Downloader: downloader.New(nil),
+		Stdout:     stdout,
+		Stderr:     &bytes.Buffer{},
+	}
+
+	if err := app.Run(context.Background(), []string{"browse", "--provider", "novelping", "--sort", "recent", "--tag", "fantasy"}); err != nil {
+		t.Fatalf("browse --sort recent --tag fantasy failed: %v", err)
 	}
 }

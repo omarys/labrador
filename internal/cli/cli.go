@@ -53,6 +53,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runFetch(ctx, subArgs)
 	case "browse":
 		return a.runBrowse(ctx, subArgs)
+	case "tags":
+		return a.runTags(ctx, subArgs)
 	case "providers":
 		return a.runProviders(ctx, subArgs)
 	case "resume", "queue":
@@ -85,6 +87,9 @@ Commands:
 
   browse [--provider <id>] [--tag <id>] [--sort popular|recent] [--page <n>] [--json]
       Browse a provider's catalog by genre or sort order.
+
+  tags --provider <id> [--json]
+      List a provider's tag IDs, for use with browse --tag.
 
   providers [--json]
       List all available providers and their capabilities.
@@ -373,9 +378,9 @@ func (a *App) runBrowse(ctx context.Context, args []string) error {
 		tag = &domain.Tag{ID: *tagID}
 	}
 
-	sortOrder := domain.SortPopular
-	if *sortStr == "recent" {
-		sortOrder = domain.SortRecent
+	sortOrder, err := parseSortOrder(*sortStr, prov)
+	if err != nil {
+		return err
 	}
 
 	results, err := prov.Browse(ctx, provider.BrowseOptions{
@@ -395,6 +400,75 @@ func (a *App) runBrowse(ctx context.Context, args []string) error {
 
 	for _, s := range results {
 		_, _ = fmt.Fprintf(a.Stdout, "[%s] %s\n    URL: %s\n", prov.Name(), s.Title, s.URL)
+	}
+
+	return nil
+}
+
+// parseSortOrder validates a --sort value against the provider's declared
+// capabilities, so an unsupported order is rejected instead of silently
+// collapsing to popular.
+func parseSortOrder(value string, prov provider.Provider) (domain.SortOrder, error) {
+	sortOrder := domain.SortOrder(value)
+	if sortOrder == "" {
+		sortOrder = domain.SortPopular
+	}
+
+	supported := prov.Capabilities().SupportedSorts
+	if len(supported) == 0 {
+		return sortOrder, nil
+	}
+
+	for _, s := range supported {
+		if s == sortOrder {
+			return sortOrder, nil
+		}
+	}
+
+	names := make([]string, len(supported))
+	for i, s := range supported {
+		names[i] = string(s)
+	}
+	return "", fmt.Errorf("sort %q is not supported by provider %s (supported: %s)",
+		value, prov.ID(), strings.Join(names, ", "))
+}
+
+func (a *App) runTags(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("tags", flag.ContinueOnError)
+	fs.SetOutput(a.Stderr)
+
+	providerID := fs.String("provider", "", "Provider ID whose tags to list (required)")
+	jsonOutput := fs.Bool("json", false, "Output results as JSON")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if *providerID == "" {
+		return fmt.Errorf("--provider is required for tags")
+	}
+
+	prov, ok := a.Registry.Get(*providerID)
+	if !ok {
+		return fmt.Errorf("provider %s not found", *providerID)
+	}
+	if !prov.Capabilities().HasTags {
+		return fmt.Errorf("provider %s does not support tag filtering", *providerID)
+	}
+
+	tags, err := prov.GetTags(ctx)
+	if err != nil {
+		return fmt.Errorf("fetching tags: %w", err)
+	}
+
+	if *jsonOutput {
+		enc := json.NewEncoder(a.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(tags)
+	}
+
+	for _, tag := range tags {
+		_, _ = fmt.Fprintf(a.Stdout, "%s\t%s\n", tag.ID, tag.Label)
 	}
 
 	return nil
@@ -525,6 +599,7 @@ func (a *App) runSelect(ctx context.Context, args []string) error {
 	fs.SetOutput(a.Stderr)
 
 	queryFlag := fs.String("query", "", "Series title to search across all providers")
+	providersFlag := fs.String("providers", "", "Comma-separated provider ids to pre-check in the provider screen")
 	outputFile := fs.String("output-file", "", "Optional file path to write chosen series URL")
 	jsonOutput := fs.Bool("json", false, "Output result as JSON")
 
@@ -537,7 +612,7 @@ func (a *App) runSelect(ctx context.Context, args []string) error {
 		query = strings.Join(fs.Args(), " ")
 	}
 
-	chosen, err := tui.RunSelect(ctx, a.Registry, a.Downloader, query)
+	chosen, err := tui.RunSelect(ctx, a.Registry, a.Downloader, query, splitProviderList(*providersFlag))
 	if err != nil {
 		return fmt.Errorf("select failed: %w", err)
 	}
@@ -746,4 +821,16 @@ func (a *App) runOpen(ctx context.Context, args []string) error {
 	}
 
 	return tui.RunChapters(ctx, a.Registry, a.Downloader, *urlFlag, *titleFlag, targetDir)
+}
+
+// splitProviderList turns a comma-separated provider id list into ids, dropping
+// blanks so "--providers a,,b" and trailing commas behave sanely.
+func splitProviderList(raw string) []string {
+	var ids []string
+	for _, part := range strings.Split(raw, ",") {
+		if id := strings.TrimSpace(part); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }

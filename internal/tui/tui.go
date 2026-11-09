@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"sort"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/omarys/labrador/internal/domain"
@@ -27,18 +28,20 @@ func Run(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downl
 
 // SelectedSeriesInfo holds details of a series picked in Select mode.
 type SelectedSeriesInfo struct {
-	Title    string `json:"title"`
-	URL      string `json:"url"`
-	Provider string `json:"provider,omitempty"`
+	Title     string   `json:"title"`
+	URL       string   `json:"url"`
+	Provider  string   `json:"provider,omitempty"`
+	Providers []string `json:"providers,omitempty"`
 }
 
-// RunSelect launches the TUI directly on the search screen across all providers,
-// returning the chosen series information when the user presses Enter.
-func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downloader, query string) (*SelectedSeriesInfo, error) {
+// RunSelect launches the TUI on the provider screen (with preselected provider
+// ids pre-checked), then its search screen, returning the chosen series
+// information when the user presses Enter.
+func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader.Downloader, query string, providers []string) (*SelectedSeriesInfo, error) {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	m := NewSelectModel(reg, dl, ctx, cancel, query)
+	m := NewSelectModel(reg, dl, ctx, cancel, query, providers)
 	p := tea.NewProgram(&m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 	if err != nil {
@@ -50,9 +53,10 @@ func RunSelect(parentCtx context.Context, reg *provider.Registry, dl *downloader
 			title = fm.selectedSeries.Title
 		}
 		return &SelectedSeriesInfo{
-			Title:    title,
-			URL:      fm.selectedURL,
-			Provider: fm.selectedProvider,
+			Title:     title,
+			URL:       fm.selectedURL,
+			Provider:  fm.selectedProvider,
+			Providers: selectedProviderIDs(fm),
 		}, nil
 	}
 	return nil, nil
@@ -100,4 +104,17 @@ func RunChapters(parentCtx context.Context, reg *provider.Registry, dl *download
 		_ = fm.DumpQueue()
 	}
 	return err
+}
+
+// selectedProviderIDs reports the checked provider ids in a stable order, so
+// callers can persist them without spurious diffs.
+func selectedProviderIDs(m *Model) []string {
+	ids := make([]string, 0, len(m.selectedProviders))
+	for id, on := range m.selectedProviders {
+		if on {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }

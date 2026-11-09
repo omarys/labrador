@@ -19,12 +19,16 @@ A distinct webcomic or manhwa work hosted by a Provider, containing metadata and
 _Avoid_: Manga, Comic, Title, Book
 
 **Chapter**:
-A single numbered installment or release of a Series, composed of an ordered list of Pages.
+A single numbered installment or release of a Series, composed of either an ordered list of Pages or a single block of prose, according to the Provider's MediaType.
 _Avoid_: Issue, Episode, Volume, Release
 
 **Page**:
-A single image asset representing one page of a Chapter, fetched from a remote Provider URL.
+A single image asset representing one page of a Chapter. Applies only to image media; a prose Chapter has no Pages.
 _Avoid_: Image, Scan, Leaf
+
+**MediaType**:
+Whether a Provider's Chapters are page images archived as `.cbz` or prose archived as `.md` (Markdown). Declared by the Provider, never inferred.
+_Avoid_: Format, Content type, Mode
 
 **Tag**:
 A genre, theme, or demographic category defined by a Provider for filtering Series.
@@ -35,7 +39,7 @@ The ordering criteria applied when browsing a Provider's catalog (e.g. Popular, 
 _Avoid_: Sort, Order, Ranking
 
 **Archive**:
-A zipped `.cbz` file containing the ordered Page images and a standardized `ComicInfo.xml` metadata descriptor for a single Chapter.
+A file containing a single Chapter: a zipped `.cbz` of the ordered Page images and a standardized `ComicInfo.xml` metadata descriptor, or a Markdown `.md` document for a prose Chapter.
 _Avoid_: Zip, Bundle, Comic file, Package
 
 **Queue**:

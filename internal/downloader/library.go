@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -109,8 +110,8 @@ func FindSeriesDirectoryInLibrary(libraryDir string, seriesTitle string) string 
 }
 
 // FindExistingChapterFile checks if a chapter is already downloaded in targetDir.
-// It checks both the direct filename and scans targetDir for any existing .cbz or .zip
-// archive whose parsed chapter number corresponds to this chapter.
+// It checks both the direct filename and scans targetDir for any existing .cbz, .zip
+// or .md file whose parsed chapter number corresponds to this chapter.
 func FindExistingChapterFile(targetDir string, series domain.Series, chapter domain.Chapter) string {
 	if targetDir == "" {
 		return ""
@@ -119,22 +120,24 @@ func FindExistingChapterFile(targetDir string, series domain.Series, chapter dom
 	sanitizedSeries := sanitizeFilename(series.Title)
 	sanitizedChapter := sanitizeFilename(chapter.Title)
 	if sanitizedChapter == "" {
-		sanitizedChapter = "Chapter_" + string(rune(chapter.Index))
+		sanitizedChapter = fmt.Sprintf("Chapter_%d", chapter.Index)
 	}
 
-	// 1. Direct path check
-	exactFile := filepath.Join(cleanDir, sanitizedSeries+" - "+sanitizedChapter+".cbz")
-	if fi, err := os.Stat(exactFile); err == nil && fi.Size() > 0 {
-		return exactFile
+	// 1. Direct path checks (.cbz for image media, .md for text media)
+	for _, ext := range []string{".cbz", ".md"} {
+		exactFile := filepath.Join(cleanDir, sanitizedSeries+" - "+sanitizedChapter+ext)
+		if fi, err := os.Stat(exactFile); err == nil && fi.Size() > 0 {
+			return exactFile
+		}
+
+		// 2. Direct chapter filename check
+		chapFile := filepath.Join(cleanDir, sanitizedChapter+ext)
+		if fi, err := os.Stat(chapFile); err == nil && fi.Size() > 0 {
+			return chapFile
+		}
 	}
 
-	// 2. Direct chapter filename check
-	chapFile := filepath.Join(cleanDir, sanitizedChapter+".cbz")
-	if fi, err := os.Stat(chapFile); err == nil && fi.Size() > 0 {
-		return chapFile
-	}
-
-	// 3. Scan target directory for any .cbz/.zip matching this chapter number
+	// 3. Scan target directory for any archive or text file matching this chapter number
 	entries, err := os.ReadDir(cleanDir)
 	if err != nil {
 		return ""
@@ -148,7 +151,7 @@ func FindExistingChapterFile(targetDir string, series domain.Series, chapter dom
 		}
 		name := entry.Name()
 		lower := strings.ToLower(name)
-		if !strings.HasSuffix(lower, ".cbz") && !strings.HasSuffix(lower, ".zip") {
+		if !strings.HasSuffix(lower, ".cbz") && !strings.HasSuffix(lower, ".zip") && !strings.HasSuffix(lower, ".md") {
 			continue
 		}
 

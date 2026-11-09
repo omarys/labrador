@@ -373,7 +373,16 @@ func (m *Model) viewBrowse() string {
 	var s strings.Builder
 	s.WriteString(m.renderTabs())
 
-	fmt.Fprintf(&s, "Sort: %s (press 's' to toggle)\n\n", m.browseSort)
+	header := fmt.Sprintf("Sort: %s (s) • Tag: all (t)", m.browseSort)
+	if m.activeTag != nil {
+		header = fmt.Sprintf("Sort: %s (s) • Tag: %s (t, a to clear)", m.browseSort, m.activeTag.Label)
+	}
+	s.WriteString(subtitleStyle.Render(header) + "\n\n")
+
+	if m.tagPickerOpen {
+		s.WriteString(m.renderTagPicker())
+		return s.String()
+	}
 
 	if m.isLoading {
 		s.WriteString(m.spinner.View() + " Loading catalog...\n")
@@ -418,7 +427,55 @@ func (m *Model) viewBrowse() string {
 		s.WriteString(subtitleStyle.Render(fmt.Sprintf("Showing %d-%d of %d series", start+1, end, len(m.searchResults))))
 	}
 
-	s.WriteString("\n" + subtitleStyle.Render("Tab: Title search • s: Toggle Popular/Recent • Enter: Open • Q: Queue • Esc: Back"))
+	s.WriteString("\n" + subtitleStyle.Render("Tab: Title search • s: Cycle sort • t: Tags • Enter: Open • Q: Queue • Esc: Back"))
+	return s.String()
+}
+
+// renderTagPicker draws the genre overlay shown instead of the browse results.
+func (m *Model) renderTagPicker() string {
+	var s strings.Builder
+	s.WriteString(subtitleStyle.Render("Select a tag (j/k: move • ⏎: filter • a: all • Esc: cancel)") + "\n\n")
+
+	if len(m.tags) == 0 {
+		s.WriteString(subtitleStyle.Render("No tags available.") + "\n")
+		return s.String()
+	}
+
+	maxVisible := 14
+	if m.height > 12 {
+		maxVisible = m.height - 12
+	}
+	start := 0
+	if m.tagCursor >= maxVisible {
+		start = m.tagCursor - maxVisible + 1
+	}
+	end := start + maxVisible
+	if end > len(m.tags) {
+		end = len(m.tags)
+	}
+
+	for i := start; i < end; i++ {
+		cursor := " "
+		if i == m.tagCursor {
+			cursor = ">"
+		}
+
+		label := m.tags[i].Label
+		if m.activeTag != nil && m.activeTag.ID == m.tags[i].ID {
+			label += " ✓"
+		}
+
+		line := fmt.Sprintf("%s %s", cursor, label)
+		if i == m.tagCursor {
+			s.WriteString(selectedItemStyle.Render(line) + "\n")
+		} else {
+			s.WriteString(normalItemStyle.Render(line) + "\n")
+		}
+	}
+
+	if len(m.tags) > maxVisible {
+		s.WriteString("\n" + subtitleStyle.Render(fmt.Sprintf("Showing %d-%d of %d tags", start+1, end, len(m.tags))))
+	}
 	return s.String()
 }
 
