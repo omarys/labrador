@@ -379,6 +379,34 @@ func TestNovelPing_GetChapterTextMarkdown(t *testing.T) {
 	}
 }
 
+// TestNovelPing_GetChapterTextDropsInjectedNotices covers the anti-piracy
+// notices novelping embeds inside chapter paragraphs: one hidden with the
+// `hidden` attribute, one with inline display:none.
+func TestNovelPing_GetChapterTextDropsInjectedNotices(t *testing.T) {
+	prov, ts := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`
+<div id="chr-content" class="chr-c">
+  <p> Fang Yuan did not care about him.<span hidden=""> Read the latest chapters at novelping dot com.</span></p>
+  <p> This moment, Bai Ning Bing’s iris shrunk.<span style="display:none"> Find the original chapter at novelping(.)com.</span></p>
+</div>`))
+	})
+
+	body, err := prov.GetChapterText(context.Background(), domain.Chapter{URL: ts.URL + "/book/x/chapter-137"})
+	if err != nil {
+		t.Fatalf("GetChapterText failed: %v", err)
+	}
+
+	want := "Fang Yuan did not care about him.\n\nThis moment, Bai Ning Bing’s iris shrunk."
+	if body != want {
+		t.Fatalf("unexpected markdown:\n got %q\nwant %q", body, want)
+	}
+	for _, notice := range []string{"latest chapters", "original chapter", "novelping dot com", "novelping(.)com"} {
+		if strings.Contains(body, notice) {
+			t.Errorf("injected notice %q survived: %q", notice, body)
+		}
+	}
+}
+
 func TestNovelPing_GetChapterTextMissingContainer(t *testing.T) {
 	prov, ts := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body><div>nothing here</div></body></html>`))

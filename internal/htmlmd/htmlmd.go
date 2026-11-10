@@ -54,6 +54,46 @@ var nonContent = map[string]bool{
 	"link": true, "template": true, "figure": true,
 }
 
+// hiddenClasses are the class names sites use to hide anti-piracy notices and
+// screen-reader-only labels. Chapter prose never carries them.
+var hiddenClasses = map[string]bool{
+	"hidden": true, "hide": true, "d-none": true, "invisible": true,
+	"sr-only": true, "visually-hidden": true, "screen-reader-text": true,
+}
+
+// isHidden reports whether sel is hidden from readers and therefore carries no
+// chapter prose. Scraped light-novel sites embed "read this at <site>" notices
+// inside the chapter body, hidden with an attribute, inline CSS or a utility
+// class; that text must not end up in the archive.
+func isHidden(sel *goquery.Selection) bool {
+	if _, ok := sel.Attr("hidden"); ok {
+		return true
+	}
+	if v, ok := sel.Attr("aria-hidden"); ok && strings.EqualFold(strings.TrimSpace(v), "true") {
+		return true
+	}
+	if v, ok := sel.Attr("style"); ok && hiddenByStyle(v) {
+		return true
+	}
+	if v, ok := sel.Attr("class"); ok {
+		for _, class := range strings.Fields(v) {
+			if hiddenClasses[strings.ToLower(class)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hiddenByStyle reports whether an inline style hides the element. Spaces are
+// stripped first so `display: none` and `display:none` are treated alike.
+func hiddenByStyle(style string) bool {
+	s := strings.ToLower(strings.ReplaceAll(style, " ", ""))
+	return strings.Contains(s, "display:none") ||
+		strings.Contains(s, "visibility:hidden") ||
+		strings.Contains(s, "font-size:0")
+}
+
 // Fragment renders the block-level content of sel as a Markdown fragment whose
 // blocks are separated by one blank line. When sel holds no block elements its
 // whole text is rendered as a single paragraph.
@@ -92,7 +132,7 @@ func Inline(sel *goquery.Selection) string {
 // renderBlock converts one block-level element, or "" when it holds no prose.
 func renderBlock(sel *goquery.Selection) string {
 	name := goquery.NodeName(sel)
-	if name == "" || name == "#text" || nonContent[name] {
+	if name == "" || name == "#text" || nonContent[name] || isHidden(sel) {
 		// Stray text between blocks is formatting noise, not prose.
 		return ""
 	}
@@ -179,7 +219,7 @@ func (w *inlineWriter) children(sel *goquery.Selection) {
 }
 
 func (w *inlineWriter) element(sel *goquery.Selection, name string) {
-	if nonContent[name] {
+	if nonContent[name] || isHidden(sel) {
 		return
 	}
 	switch name {

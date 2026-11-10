@@ -176,6 +176,76 @@ func TestFragment(t *testing.T) {
 			want: "body",
 		},
 		{
+			name: "hidden span attribute is dropped",
+			html: `<p>“Fang Yuan, hand it over.”<span hidden=""> Read the latest chapters at example dot com.</span></p>`,
+			want: `“Fang Yuan, hand it over.”`,
+		},
+		{
+			name: "valueless hidden attribute is dropped",
+			html: `<p>prose<span hidden>Read elsewhere.</span></p>`,
+			want: "prose",
+		},
+		{
+			name: "hidden attribute with a value is dropped",
+			html: `<p>prose<span hidden="hidden">Read elsewhere.</span></p>`,
+			want: "prose",
+		},
+		{
+			name: "inline display:none is dropped",
+			html: `<p>prose<span style="display:none"> Find the original chapter at example(.)com.</span></p>`,
+			want: "prose",
+		},
+		{
+			name: "inline display: none with a space is dropped",
+			html: `<p>prose<span style="color: #fff; display: none;">stolen from elsewhere</span></p>`,
+			want: "prose",
+		},
+		{
+			name: "inline visibility:hidden is dropped",
+			html: `<p>prose<span style="visibility:hidden">notice</span></p>`,
+			want: "prose",
+		},
+		{
+			name: "font-size:0 cloaking is dropped",
+			html: `<p>prose<span style="font-size:0">notice</span></p>`,
+			want: "prose",
+		},
+		{
+			name: "aria-hidden icons are dropped",
+			html: `<p>prose <span aria-hidden="true">icon</span>text</p>`,
+			want: "prose text",
+		},
+		{
+			name: "screen-reader-only labels are dropped",
+			html: `<p>prose<span class="sr-only">Show menu</span> and more</p>`,
+			want: "prose and more",
+		},
+		{
+			name: "utility hidden classes are dropped",
+			html: `<p>prose<span class="d-none hidden">notice</span></p>`,
+			want: "prose",
+		},
+		{
+			name: "a hidden block is dropped entirely",
+			html: `<p>prose</p><div hidden><p>Read at example dot com.</p></div><p>more prose</p>`,
+			want: "prose\n\nmore prose",
+		},
+		{
+			name: "a paragraph left empty by hidden content disappears",
+			html: `<p>prose</p><p><span hidden>notice</span></p>`,
+			want: "prose",
+		},
+		{
+			name: "visible spans and classes are kept",
+			html: `<p>a <span class="highlight">b</span> c</p>`,
+			want: "a b c",
+		},
+		{
+			name: "prose between hidden notices survives",
+			html: `<p>start<span hidden>notice one</span> middle <span style="display:none">notice two</span>end</p>`,
+			want: "start middle end",
+		},
+		{
 			name: "empty and whitespace-only fragments",
 			html: "<p>   </p>\n<p></p>\n<div> </div>",
 			want: "",
