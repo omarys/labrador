@@ -56,6 +56,7 @@ Labrador forms the data retrieval engine in a unified local comic and manhwa man
 | MangaPill | `mangapill` | image | yes | yes | popular, recent |
 | Manganato | `manganato` | image | yes | yes | popular, recent |
 | Manganelo | `manganelo` | image | yes | yes | popular, recent |
+| NovelArchive | `novelarchive` | text | yes | yes | popular, recent, rating |
 | NovelPing | `novelping` | text | yes | yes | popular, recent |
 | ReadComicsOnline | `readcomicsonline` | image | no | no | — |
 | Webtoons | `webtoons` | image | yes | yes | popular, recent, rating |

@@ -11,6 +11,7 @@ import (
 	"github.com/omarys/labrador/internal/providers/manganato"
 	"github.com/omarys/labrador/internal/providers/manganelo"
 	"github.com/omarys/labrador/internal/providers/mangapill"
+	"github.com/omarys/labrador/internal/providers/novelarchive"
 	"github.com/omarys/labrador/internal/providers/novelping"
 	"github.com/omarys/labrador/internal/providers/readcomicsonline"
 	"github.com/omarys/labrador/internal/providers/webtoons"
@@ -31,6 +32,7 @@ func RegisterAll(reg *provider.Registry, client *http.Client) {
 	_ = reg.Register(weebcentral.New(client))
 	_ = reg.Register(webtoons.New(client))
 	_ = reg.Register(novelping.New(client))
+	_ = reg.Register(novelarchive.New(client))
 
 	registerPrivate(reg, client)
 }
