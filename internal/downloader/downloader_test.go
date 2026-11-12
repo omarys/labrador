@@ -544,3 +544,26 @@ func TestDownloader_DownloadChapter_SkipDeweyBracketFile(t *testing.T) {
 		t.Errorf("expected 0 GetPages calls for skipped chapter, got %d", atomic.LoadInt32(&prov.calls))
 	}
 }
+
+func TestResolveDestinationPathWithoutSeriesTitle(t *testing.T) {
+	// A series resolved from a pasted URL carries no title, and the filename
+	// must not start with the joined separator.
+	series := domain.Series{URL: "https://novelarchive.st/novel?id=abc"}
+	chapter := domain.Chapter{Title: "Chapter 1 - Crimson"}
+
+	got := downloader.ResolveDestinationPath(series, chapter, downloader.DownloadOptions{
+		OutputDir: t.TempDir(),
+		Media:     domain.MediaText,
+	})
+	if want := "Chapter 1 - Crimson.md"; filepath.Base(got) != want {
+		t.Errorf("filename = %q, want %q", filepath.Base(got), want)
+	}
+
+	withTitle := downloader.ResolveDestinationPath(domain.Series{Title: "Some Series"}, chapter, downloader.DownloadOptions{
+		OutputDir: t.TempDir(),
+		Media:     domain.MediaText,
+	})
+	if want := "Some Series - Chapter 1 - Crimson.md"; filepath.Base(withTitle) != want {
+		t.Errorf("filename = %q, want %q", filepath.Base(withTitle), want)
+	}
+}

@@ -231,7 +231,10 @@ func ResolveDestinationPath(series domain.Series, chapter domain.Chapter, opts D
 	if sanitizedChapter == "" {
 		sanitizedChapter = fmt.Sprintf("Chapter_%d", chapter.Index)
 	}
-	filename := fmt.Sprintf("%s - %s%s", sanitizedSeries, sanitizedChapter, ext)
+	filename := sanitizedChapter + ext
+	if sanitizedSeries != "" {
+		filename = sanitizedSeries + " - " + filename
+	}
 
 	if opts.SeriesDir != "" {
 		return filepath.Join(opts.SeriesDir, filename)
