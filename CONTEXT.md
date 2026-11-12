@@ -32,7 +32,17 @@ _Avoid_: Format, Content type, Mode
 
 **Tag**:
 A genre, theme, or demographic category defined by a Provider for filtering Series.
+Identity is provider-scoped — `(Provider, Tag.ID)` — because IDs disagree between Providers
+(a UUID upstream, a URL slug elsewhere) and the same display Label can name different
+things. `Tag.ID` is the value the Provider filters by; `Tag.Label` is display text and
+may change without changing identity.
 _Avoid_: Genre, Category, Keyword, Label
+
+**Tag Vocabulary**:
+The complete set of Tags a Provider defines. A Provider whose Tag Vocabulary cannot be
+read in full reports `HasTags: false` rather than a sample, since callers may replace a
+stored vocabulary with what they are given.
+_Avoid_: Tag list, Genres, Facets, Filters
 
 **SortOrder**:
 The ordering criteria applied when browsing a Provider's catalog (e.g. Popular, Recent).
