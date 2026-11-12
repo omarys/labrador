@@ -207,7 +207,11 @@ func (m *Model) renderChapterDetails(width int) string {
 		dest = string([]rune(dest)[:width-15]) + "…"
 	}
 	b.WriteString(metadataLabelStyle.Render("Destination: ") + subtitleStyle.Render(dest) + "\n")
-	b.WriteString(metadataLabelStyle.Render("Archive: ") + metadataValueStyle.Render(".cbz (Store)") + "\n")
+	archive := ".cbz (Store)"
+	if m.activeProvider != nil && m.activeProvider.Capabilities().Media == domain.MediaText {
+		archive = ".md (Prose)"
+	}
+	b.WriteString(metadataLabelStyle.Render("Archive: ") + metadataValueStyle.Render(archive) + "\n")
 
 	b.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(draculaCyan).Render("Controls") + "\n")
 	b.WriteString("• Space / Tap: Toggle selected\n")

@@ -341,12 +341,18 @@ func (a *App) runFetch(ctx context.Context, args []string) error {
 		return enc.Encode(res)
 	}
 
+	// Prose chapters have no pages: report the unit the file actually has.
+	unit := fmt.Sprintf("%d pages", res.PageCount)
+	if prov.Capabilities().Media == domain.MediaText {
+		unit = "prose, Markdown"
+	}
+
 	if res.Skipped {
-		_, _ = fmt.Fprintf(a.Stdout, "Skipped (already downloaded): %s (%d pages)\n", res.FilePath, res.PageCount)
+		_, _ = fmt.Fprintf(a.Stdout, "Skipped (already downloaded): %s (%s)\n", res.FilePath, unit)
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(a.Stdout, "Saved chapter to: %s (%d pages)\nURL: %s\n", res.FilePath, res.PageCount, res.FetchURL)
+	_, _ = fmt.Fprintf(a.Stdout, "Saved chapter to: %s (%s)\nURL: %s\n", res.FilePath, unit, res.FetchURL)
 	return nil
 }
 
