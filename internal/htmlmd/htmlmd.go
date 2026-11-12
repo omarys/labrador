@@ -30,6 +30,8 @@ var (
 	// that scraped prose is full of.
 	reSpace  = regexp.MustCompile(`[ \t\r\n\x{00A0}]+`)
 	reBreaks = regexp.MustCompile(`\x00(?: ?\x00)* *`)
+	// reBlankLine splits preserved text into paragraph-sized chunks.
+	reBlankLine = regexp.MustCompile(`\n[ \t\x{00A0}]*\n`)
 )
 
 // inlineSpecials are the characters that change meaning in Markdown and are
@@ -151,11 +153,7 @@ func renderBlock(sel *goquery.Selection) string {
 	case "hr":
 		return "---"
 	case "pre":
-		code := strings.TrimRight(sel.Text(), "\n")
-		if strings.TrimSpace(code) == "" {
-			return ""
-		}
-		return "```\n" + code + "\n```"
+		return pre(sel)
 	case "ul", "ol":
 		return list(sel, name == "ol")
 	case "div", "section", "article", "main", "center", "body",
@@ -163,6 +161,28 @@ func renderBlock(sel *goquery.Selection) string {
 		return Fragment(sel)
 	}
 	return Paragraph(sel)
+}
+
+// pre renders preserved text as ordinary paragraphs. Prose chapters use <pre>
+// for layout — letters, system messages, verse — never for code, so a fenced
+// block would only make a reader draw a grey box around chapter prose.
+// Indentation is layout too, and is collapsed like any other whitespace; blank
+// lines keep the passage as separate paragraphs.
+func pre(sel *goquery.Selection) string {
+	text := strings.ReplaceAll(sel.Text(), "\r\n", "\n")
+	var blocks []string
+	for _, chunk := range reBlankLine.Split(text, -1) {
+		chunk = strings.TrimSpace(reSpace.ReplaceAllString(chunk, " "))
+		if chunk == "" {
+			continue
+		}
+		w := &inlineWriter{lineStart: true}
+		w.text(chunk)
+		if paragraph := strings.TrimSpace(w.b.String()); paragraph != "" {
+			blocks = append(blocks, paragraph)
+		}
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 // blockquote prefixes every line so blank lines inside the quote stay inside it.
@@ -230,7 +250,7 @@ func (w *inlineWriter) element(sel *goquery.Selection, name string) {
 	case "strong", "b":
 		w.wrap(sel, "**", "**")
 	case "code", "kbd", "samp", "tt":
-		w.wrap(sel, "`", "`")
+		w.code(sel)
 	case "del", "s", "strike":
 		w.wrap(sel, "~~", "~~")
 	case "a":
@@ -242,6 +262,29 @@ func (w *inlineWriter) element(sel *goquery.Selection, name string) {
 		w.text(" ")
 	default:
 		w.children(sel)
+	}
+}
+
+// code renders an inline code span. Its text is written verbatim: Markdown does
+// not process backslash escapes inside code, so escaping here would surface as
+// literal `\[` in a reader. A span whose text contains a backtick cannot be
+// delimited, so it falls back to escaped prose.
+func (w *inlineWriter) code(sel *goquery.Selection) {
+	text := sel.Text()
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
+	}
+	if strings.Contains(trimmed, "`") {
+		w.text(trimmed)
+		return
+	}
+	if lead := text[:len(text)-len(strings.TrimLeft(text, " \t"))]; lead != "" {
+		w.text(lead)
+	}
+	w.write("`" + trimmed + "`")
+	if trail := text[len(strings.TrimRight(text, " \t")):]; trail != "" {
+		w.text(trail)
 	}
 }
 

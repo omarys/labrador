@@ -151,9 +151,39 @@ func TestFragment(t *testing.T) {
 			want: "1. one\n2. two",
 		},
 		{
-			name: "preformatted block is fenced",
+			name: "preformatted text becomes ordinary prose",
 			html: "<pre>a = 1\nb = 2</pre>",
-			want: "```\na = 1\nb = 2\n```",
+			want: "a = 1 b = 2",
+		},
+		{
+			name: "preformatted indentation is layout, not code",
+			html: "<pre>\n    indented one\n    indented two\n</pre>",
+			want: "indented one indented two",
+		},
+		{
+			name: "blank lines in preformatted text separate paragraphs",
+			html: "<pre>Dear Sir,\n\nI write to you.\nYours.</pre>",
+			want: "Dear Sir,\n\nI write to you. Yours.",
+		},
+		{
+			name: "preformatted prose is still escaped",
+			html: "<pre>[System] 2 * 3</pre>",
+			want: "\\[System\\] 2 \\* 3",
+		},
+		{
+			name: "preformatted text is never fenced",
+			html: "<p>before</p><pre>kept</pre><p>after</p>",
+			want: "before\n\nkept\n\nafter",
+		},
+		{
+			name: "inline code keeps its text verbatim",
+			html: `<p>the <code>[System] notice</code> appeared</p>`,
+			want: "the `[System] notice` appeared",
+		},
+		{
+			name: "inline code cannot hold a backtick",
+			html: "<p>a <code>tick`in</code> word</p>",
+			want: "a tick\\`in word",
 		},
 		{
 			name: "wrapper elements are transparent",
