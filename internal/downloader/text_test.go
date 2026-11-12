@@ -136,7 +136,42 @@ func TestFindExistingChapterFile_TextMedia(t *testing.T) {
 		t.Fatalf("writing existing chapter file: %v", err)
 	}
 
-	if got := downloader.FindExistingChapterFile(dir, series, chapter); got != target {
+	if got := downloader.FindExistingChapterFile(dir, series, chapter, domain.MediaText); got != target {
 		t.Errorf("FindExistingChapterFile = %q, want %q", got, target)
+	}
+}
+
+// TestChapterLookupIgnoresTheOtherMediaType is the same-title coexistence rule: a
+// comic archive numbered 12 does not mean prose chapter 12 is downloaded, and a
+// prose chapter does not satisfy an image chapter. Without this a manhwa and a
+// light novel sharing a title (and therefore a library directory) would shadow
+// each other's chapters.
+func TestChapterLookupIgnoresTheOtherMediaType(t *testing.T) {
+	dir := t.TempDir()
+	series := domain.Series{ID: "s1", Title: "Shadow Slave"}
+	chapter := domain.Chapter{ID: "c1", Title: "Chapter 12"}
+
+	archive := filepath.Join(dir, "Shadow Slave - Chapter 12.cbz")
+	if err := os.WriteFile(archive, []byte("PK\x03\x04archive"), 0o644); err != nil {
+		t.Fatalf("writing archive: %v", err)
+	}
+
+	if got := downloader.FindExistingChapterFile(dir, series, chapter, domain.MediaText); got != "" {
+		t.Errorf("text lookup found %q, want nothing: only .md counts for prose", got)
+	}
+	if got := downloader.FindExistingChapterFile(dir, series, chapter, domain.MediaImage); got != archive {
+		t.Errorf("image lookup = %q, want %q", got, archive)
+	}
+
+	prose := filepath.Join(dir, "Shadow Slave - Chapter 12.md")
+	if err := os.WriteFile(prose, []byte("# Chapter 12\n\nBody.\n"), 0o644); err != nil {
+		t.Fatalf("writing prose: %v", err)
+	}
+
+	if got := downloader.FindExistingChapterFile(dir, series, chapter, domain.MediaText); got != prose {
+		t.Errorf("text lookup = %q, want %q", got, prose)
+	}
+	if got := downloader.FindExistingChapterFile(dir, series, chapter, domain.MediaImage); got != archive {
+		t.Errorf("image lookup = %q, want the archive %q, not the prose file", got, archive)
 	}
 }

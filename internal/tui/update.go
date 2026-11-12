@@ -117,7 +117,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chapterCache[msg.cacheKey] = msg.chapters
 			}
 
-			// Scan target directory for existing chapter files (.cbz/.zip)
+			// Scan target directory for existing chapter files of the active media type
+			media := domain.MediaImage
+			if m.activeProvider != nil {
+				media = m.activeProvider.Capabilities().Media
+			}
 			targetDir := m.seriesDir
 			if targetDir == "" && m.outputDir != "" {
 				targetDir = filepath.Join(m.outputDir, m.activeSeries.Title)
@@ -133,7 +137,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if targetDir != "" {
 				for _, ch := range m.chapters {
-					if existing := downloader.FindExistingChapterFile(targetDir, m.activeSeries, ch); existing != "" {
+					if existing := downloader.FindExistingChapterFile(targetDir, m.activeSeries, ch, media); existing != "" {
 						m.downloadedChapters[chapterKey(ch)] = existing
 					}
 				}

@@ -328,7 +328,7 @@ func (d *Downloader) DownloadChapter(
 			}, nil
 		}
 
-		if existingFile := FindExistingChapterFile(targetDir, series, chapter); existingFile != "" {
+		if existingFile := FindExistingChapterFile(targetDir, series, chapter, opts.Media); existingFile != "" {
 			absExisting, _ := filepath.Abs(existingFile)
 			return &DownloadResult{
 				ProviderID:     prov.ID(),

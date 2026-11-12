@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/omarys/labrador/internal/domain"
@@ -110,9 +111,11 @@ func FindSeriesDirectoryInLibrary(libraryDir string, seriesTitle string) string 
 }
 
 // FindExistingChapterFile checks if a chapter is already downloaded in targetDir.
-// It checks both the direct filename and scans targetDir for any existing .cbz, .zip
-// or .md file whose parsed chapter number corresponds to this chapter.
-func FindExistingChapterFile(targetDir string, series domain.Series, chapter domain.Chapter) string {
+// Only files of the chapter's own media type count: a prose chapter is not
+// already present because a comic archive with the same chapter number exists,
+// and vice versa. That is what lets a manhwa and a light novel of the same title
+// share one library.
+func FindExistingChapterFile(targetDir string, series domain.Series, chapter domain.Chapter, media domain.MediaType) string {
 	if targetDir == "" {
 		return ""
 	}
@@ -123,8 +126,13 @@ func FindExistingChapterFile(targetDir string, series domain.Series, chapter dom
 		sanitizedChapter = fmt.Sprintf("Chapter_%d", chapter.Index)
 	}
 
-	// 1. Direct path checks (.cbz for image media, .md for text media)
-	for _, ext := range []string{".cbz", ".md"} {
+	exts := []string{".cbz", ".zip"}
+	if media == domain.MediaText {
+		exts = []string{".md"}
+	}
+
+	// 1. Direct path checks for the chapter's media type
+	for _, ext := range exts {
 		exactFile := filepath.Join(cleanDir, sanitizedSeries+" - "+sanitizedChapter+ext)
 		if fi, err := os.Stat(exactFile); err == nil && fi.Size() > 0 {
 			return exactFile
@@ -137,7 +145,7 @@ func FindExistingChapterFile(targetDir string, series domain.Series, chapter dom
 		}
 	}
 
-	// 3. Scan target directory for any archive or text file matching this chapter number
+	// 3. Scan target directory for any file of this media type matching the chapter number
 	entries, err := os.ReadDir(cleanDir)
 	if err != nil {
 		return ""
@@ -151,7 +159,7 @@ func FindExistingChapterFile(targetDir string, series domain.Series, chapter dom
 		}
 		name := entry.Name()
 		lower := strings.ToLower(name)
-		if !strings.HasSuffix(lower, ".cbz") && !strings.HasSuffix(lower, ".zip") && !strings.HasSuffix(lower, ".md") {
+		if !slices.ContainsFunc(exts, func(ext string) bool { return strings.HasSuffix(lower, ext) }) {
 			continue
 		}
 
