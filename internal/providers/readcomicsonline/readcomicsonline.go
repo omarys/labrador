@@ -2,6 +2,7 @@ package readcomicsonline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -26,6 +27,16 @@ var (
 	pageNumRE    = regexp.MustCompile(`p(\d+)\.webp$`)
 	dateSuffixRE = regexp.MustCompile(`\s*\d{4}-\d{2}-\d{2}$`)
 )
+
+// searchResult is one entry of the site's /api/search payload.
+type searchResult struct {
+	Title string `json:"title"`
+	Slug  string `json:"slug"`
+}
+
+type searchResponse struct {
+	Results []searchResult `json:"results"`
+}
 
 type Provider struct {
 	baseURL string
@@ -67,8 +78,11 @@ func (p *Provider) MatchesURL(rawURL string) bool {
 	return strings.Contains(strings.ToLower(u.Host), "readcomicsonline.lol")
 }
 
+// Search reads the JSON endpoint the site's own search page calls. The /search
+// page is a client-rendered app shell whose HTML holds only skeleton cards, so
+// its markup carries no series to scrape.
 func (p *Provider) Search(ctx context.Context, query string) ([]domain.Series, error) {
-	reqURL := fmt.Sprintf("%s/search?q=%s", p.baseURL, url.QueryEscape(query))
+	reqURL := fmt.Sprintf("%s/api/search?q=%s", p.baseURL, url.QueryEscape(query))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -84,42 +98,33 @@ func (p *Provider) Search(ctx context.Context, query string) ([]domain.Series, e
 		return nil, fmt.Errorf("unexpected status: %s", resp.Status)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("parsing html: %w", err)
+	var payload searchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decoding search results: %w", err)
 	}
 
 	var results []domain.Series
 	seen := make(map[string]bool)
 
-	doc.Find("a[href^='/comic/']").Each(func(_ int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if !exists {
-			return
+	for _, item := range payload.Results {
+		slug := strings.TrimSpace(item.Slug)
+		title := strings.TrimSpace(item.Title)
+		if slug == "" || title == "" {
+			continue
 		}
 
-		img := s.Find("img").First()
-		alt, hasAlt := img.Attr("alt")
-		if !hasAlt || alt == "" {
-			return
+		fullURL := p.resolveURL("/comic/" + slug)
+		if seen[fullURL] {
+			continue
 		}
+		seen[fullURL] = true
 
-		title := strings.TrimSuffix(alt, " comic cover")
-		title = strings.TrimSpace(title)
-		fullURL := p.resolveURL(href)
-
-		if !seen[fullURL] && title != "" {
-			seen[fullURL] = true
-			parts := strings.Split(strings.TrimRight(href, "/"), "/")
-			seriesID := parts[len(parts)-1]
-
-			results = append(results, domain.Series{
-				ID:    seriesID,
-				Title: title,
-				URL:   fullURL,
-			})
-		}
-	})
+		results = append(results, domain.Series{
+			ID:    slug,
+			Title: title,
+			URL:   fullURL,
+		})
+	}
 
 	return results, nil
 }

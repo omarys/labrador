@@ -7,8 +7,88 @@ import (
 	"testing"
 
 	"github.com/omarys/labrador/internal/domain"
+	"github.com/omarys/labrador/internal/provider"
 	"github.com/omarys/labrador/internal/providers/mangakatana"
 )
+
+// TestMangaKatana_GetTags uses a fragment of the live /genres filter block,
+// trimmed to three genres (one of them labelled with the extra "hot" class),
+// wrapped in the grid markup the site nests items in. The trailing
+// .genres.uk-hidden-small block is the per-series genre nav that sits next to
+// the filter and must not be mistaken for the tag list.
+func TestMangaKatana_GetTags(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		html := `
+		<div class="genres">
+			<div class="uk-grid uk-grid-medium">
+				<div class="uk-width-medium-1-4 uk-width-1-2"><div class="item">
+					<span class="wrap_chk"><input type="checkbox" name="include_genre_chk" id="in-44" data-op="ex-44" value="4-koma"><label class="include" for="in-44"></label></span> <span class="wrap_chk"><input type="checkbox" name="exclude_genre_chk" id="ex-44" data-op="in-44" value="4-koma"><label class="exclude" for="ex-44"></label></span> <span class="name">4 koma</span>
+				</div></div><div class="uk-width-medium-1-4 uk-width-1-2"><div class="item">
+					<span class="wrap_chk"><input type="checkbox" name="include_genre_chk" id="in-14" data-op="ex-14" value="action"><label class="include" for="in-14"></label></span> <span class="wrap_chk"><input type="checkbox" name="exclude_genre_chk" id="ex-14" data-op="in-14" value="action"><label class="exclude" for="ex-14"></label></span> <span class="name">Action</span>
+				</div></div><div class="uk-width-medium-1-4 uk-width-1-2"><div class="item">
+					<span class="wrap_chk"><input type="checkbox" name="include_genre_chk" id="in-34" data-op="ex-34" value="erotica"><label class="include" for="in-34"></label></span> <span class="wrap_chk"><input type="checkbox" name="exclude_genre_chk" id="ex-34" data-op="in-34" value="erotica"><label class="exclude" for="ex-34"></label></span> <span class="name hot">Erotica</span>
+				</div></div>
+			</div>
+			<div class="item"><button type="submit" class="filter_bt transition">Apply</button></div>
+		</div>
+		<div class="genres uk-hidden-small">
+			<a href="https://mangakatana.com/genre/action">Action</a><a href="https://mangakatana.com/genre/erotica">Erotica</a>		</div>`
+		_, _ = w.Write([]byte(html))
+	}))
+	defer ts.Close()
+
+	prov := mangakatana.NewWithBaseURL(ts.URL, ts.Client())
+	tags, err := prov.GetTags(context.Background())
+	if err != nil {
+		t.Fatalf("GetTags failed: %v", err)
+	}
+
+	want := []domain.Tag{
+		{ID: "4-koma", Label: "4 koma"},
+		{ID: "action", Label: "Action"},
+		{ID: "erotica", Label: "Erotica"},
+	}
+	if len(tags) != len(want) {
+		t.Fatalf("expected %d tags, got %d: %+v", len(want), len(tags), tags)
+	}
+	for i := range want {
+		if tags[i] != want[i] {
+			t.Errorf("tag %d: expected %+v, got %+v", i, want[i], tags[i])
+		}
+	}
+}
+
+// TestMangaKatana_Browse_Tag checks a returned tag ID reaches the genre listing
+// the site filters by, so a tag the user picks narrows Browse rather than
+// bouncing off a dead URL.
+func TestMangaKatana_Browse_Tag(t *testing.T) {
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		html := `
+		<div id="book_list">
+			<div class="item">
+				<h3 class="title"><a href="/manga/chainsaw-man.12345">Chainsaw Man</a></h3>
+			</div>
+		</div>`
+		_, _ = w.Write([]byte(html))
+	}))
+	defer ts.Close()
+
+	prov := mangakatana.NewWithBaseURL(ts.URL, ts.Client())
+	results, err := prov.Browse(context.Background(), provider.BrowseOptions{
+		Tag: &domain.Tag{ID: "action", Label: "Action"},
+	})
+	if err != nil {
+		t.Fatalf("Browse with tag failed: %v", err)
+	}
+	if gotPath != "/genre/action/page/1" {
+		t.Errorf("expected Browse to request /genre/action/page/1, got %q", gotPath)
+	}
+	if len(results) != 1 || results[0].ID != "12345" {
+		t.Errorf("unexpected series: %+v", results)
+	}
+}
 
 func TestMangaKatana_Search(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -91,31 +91,45 @@ func (p *Provider) fetchSeriesList(ctx context.Context, reqURL string) ([]domain
 	}
 
 	var results []domain.Series
-	doc.Find("div.grid div.border-border, div.container div.grid > div, div.my-3.grid > div").Each(func(_ int, s *goquery.Selection) {
-		a := s.Find("a[href^='/manga/'], a").First()
-		relHref, exists := a.Attr("href")
-		if !exists || !strings.HasPrefix(relHref, "/manga/") {
+	seen := make(map[string]bool)
+	doc.Find("a[href^='/manga/']").Each(func(_ int, s *goquery.Selection) {
+		relHref, exists := s.Attr("href")
+		if !exists {
 			return
 		}
 
-		title := strings.TrimSpace(s.Find(".font-bold").Text())
-		if title == "" {
-			title = strings.TrimSpace(a.Text())
-		}
-		if title == "" {
-			return
-		}
-
-		seriesURL := p.resolveURL(relHref)
 		seriesID := strings.TrimPrefix(relHref, "/manga/")
+		if seriesID == "" || seen[seriesID] {
+			return
+		}
 
+		title := seriesTitle(s)
+		if title == "" {
+			return
+		}
+
+		seen[seriesID] = true
 		results = append(results, domain.Series{
 			ID:    seriesID,
 			Title: title,
-			URL:   seriesURL,
+			URL:   p.resolveURL(relHref),
 		})
 	})
 	return results, nil
+}
+
+// seriesTitle reads the title of the card an /manga/ anchor belongs to. Cards
+// in the search and genre grids link twice — once through the cover art, whose
+// anchor holds no text, and once through the title — so a blank anchor falls
+// back to the bold title of the enclosing card.
+func seriesTitle(a *goquery.Selection) string {
+	if title := strings.TrimSpace(a.Find("div.font-black, div.font-bold").First().Text()); title != "" {
+		return title
+	}
+	if title := strings.TrimSpace(a.Text()); title != "" {
+		return title
+	}
+	return strings.TrimSpace(a.Closest("div").Find("div.font-black, div.font-bold").First().Text())
 }
 
 func (p *Provider) resolveURL(relPath string) string {
@@ -128,9 +142,9 @@ func (p *Provider) resolveURL(relPath string) string {
 	return p.baseURL + relPath
 }
 
-// GetTags extracts available genres from the genre index.
+// GetTags extracts the genre filters offered by the advanced search form.
 func (p *Provider) GetTags(ctx context.Context) ([]domain.Tag, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/mangas", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/search", nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -147,19 +161,16 @@ func (p *Provider) GetTags(ctx context.Context) ([]domain.Tag, error) {
 	}
 
 	var tags []domain.Tag
-	doc.Find("div[data-menu='genres'] a").Each(func(_ int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if !exists {
+	doc.Find("input[name='genre']").Each(func(_ int, s *goquery.Selection) {
+		value, exists := s.Attr("value")
+		value = strings.TrimSpace(value)
+		if !exists || value == "" {
 			return
 		}
-		id := strings.TrimPrefix(href, "/genres/")
-		label := strings.TrimSpace(s.Text())
-		if id != "" && label != "" {
-			tags = append(tags, domain.Tag{
-				ID:    id,
-				Label: label,
-			})
-		}
+		tags = append(tags, domain.Tag{
+			ID:    value,
+			Label: value,
+		})
 	})
 
 	return tags, nil
@@ -197,6 +208,10 @@ func (p *Provider) GetPages(ctx context.Context, chapter domain.Chapter) ([]doma
 		pages = append(pages, domain.Page{
 			URL:   src,
 			Index: index,
+			// The image host rejects requests that arrive without a mangapill referer.
+			Headers: map[string][]string{
+				"Referer": {p.baseURL},
+			},
 		})
 		index++
 	})
@@ -213,11 +228,13 @@ func (p *Provider) Browse(ctx context.Context, opts provider.BrowseOptions) ([]d
 
 	var browseURL string
 	if opts.Tag != nil && opts.Tag.ID != "" {
-		browseURL = fmt.Sprintf("%s/genres/%s?page=%d", p.baseURL, opts.Tag.ID, page)
+		browseURL = fmt.Sprintf("%s/search?genre=%s&page=%d", p.baseURL, url.QueryEscape(opts.Tag.ID), page)
 	} else if opts.Sort == domain.SortRecent {
 		browseURL = fmt.Sprintf("%s/chapters?page=%d", p.baseURL, page)
 	} else {
-		browseURL = fmt.Sprintf("%s/search?q=&page=%d", p.baseURL, page)
+		// A search with no filter at all renders the empty advanced search form,
+		// so the catalogue listing is asked for by format.
+		browseURL = fmt.Sprintf("%s/search?type=manga&page=%d", p.baseURL, page)
 	}
 
 	return p.fetchSeriesList(ctx, browseURL)
@@ -251,7 +268,7 @@ func (p *Provider) GetChapters(ctx context.Context, series domain.Series) ([]dom
 
 		title := strings.TrimSpace(s.Text())
 		chapterURL := p.resolveURL(href)
-		chapterID := strings.TrimPrefix(href, "/ck/")
+		chapterID := strings.TrimPrefix(href, "/chapters/")
 
 		chapters = append(chapters, domain.Chapter{
 			ID:            chapterID,

@@ -150,15 +150,19 @@ func (p *Provider) GetTags(ctx context.Context) ([]domain.Tag, error) {
 		return nil, fmt.Errorf("parsing html: %w", err)
 	}
 
+	// The genre list is the include/exclude filter, one item per genre, whose
+	// checkbox value is the slug Browse filters by (/genre/<slug>):
+	//
+	//	<span class="wrap_chk"><input name="include_genre_chk" value="action">
+	//	<span class="name">Action</span>
 	var tags []domain.Tag
-	doc.Find(".genres_wrap a").Each(func(_ int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
+	doc.Find(".genres .item").Each(func(_ int, s *goquery.Selection) {
+		id, exists := s.Find(`input[name="include_genre_chk"]`).First().Attr("value")
 		if !exists {
 			return
 		}
-		id := strings.TrimPrefix(href, "/genre/")
-		id = strings.Trim(id, "/")
-		label := strings.TrimSpace(s.Text())
+		id = strings.TrimSpace(id)
+		label := strings.TrimSpace(s.Find(".name").First().Text())
 		if id != "" && label != "" {
 			tags = append(tags, domain.Tag{
 				ID:    id,

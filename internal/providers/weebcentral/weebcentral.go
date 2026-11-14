@@ -69,7 +69,10 @@ func (p *Provider) Browse(ctx context.Context, opts provider.BrowseOptions) ([]d
 	if opts.Sort == domain.SortRecent {
 		sortParam = "Latest+Updates"
 	}
-	reqURL := fmt.Sprintf("%s/search/data?sort=%s&display_mode=Full+Display", p.baseURL, sortParam)
+	// search/data ranks ascending unless order is named, and ascending puts the
+	// bottom of the catalogue first — the least read series, several of which have
+	// no chapters left on the site. The site's own sort form submits Descending.
+	reqURL := fmt.Sprintf("%s/search/data?sort=%s&order=Descending&display_mode=Full+Display", p.baseURL, sortParam)
 	return p.fetchSeries(ctx, reqURL)
 }
 
