@@ -8,8 +8,6 @@ import (
 	"github.com/omarys/labrador/internal/provider"
 	"github.com/omarys/labrador/internal/providers/mangadex"
 	"github.com/omarys/labrador/internal/providers/mangakatana"
-	"github.com/omarys/labrador/internal/providers/manganato"
-	"github.com/omarys/labrador/internal/providers/manganelo"
 	"github.com/omarys/labrador/internal/providers/mangapill"
 	"github.com/omarys/labrador/internal/providers/novelarchive"
 	"github.com/omarys/labrador/internal/providers/novelping"
@@ -26,8 +24,6 @@ func RegisterAll(reg *provider.Registry, client *http.Client) {
 	_ = reg.Register(mangapill.New(client))
 	_ = reg.Register(mangadex.New(client))
 	_ = reg.Register(mangakatana.New(client))
-	_ = reg.Register(manganato.New(client))
-	_ = reg.Register(manganelo.New(client))
 	_ = reg.Register(readcomicsonline.New(client))
 	_ = reg.Register(weebcentral.New(client))
 	_ = reg.Register(webtoons.New(client))
