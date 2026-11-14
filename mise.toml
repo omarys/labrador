@@ -27,3 +27,7 @@ run = "go build -ldflags=\"-s -w\" -o bin/labrador ./cmd/labrador"
 description = "Build and install Labrador binary into ~/.local/bin and ~/.cargo/bin"
 depends = ["build"]
 run = "./install.sh"
+
+[tasks.live]
+description = "Smoke-test every provider against its live site"
+run = "go test -tags live -count=1 -timeout 15m ./internal/providers/"
