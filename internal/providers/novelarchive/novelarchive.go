@@ -256,7 +256,25 @@ func (p *Provider) GetChapterText(ctx context.Context, chapter domain.Chapter) (
 // one of two shapes — paragraphs separated by a blank line, or one paragraph per
 // line with no blank lines anywhere — so every non-empty line becomes its own
 // paragraph. Read as a single line, these chapters collapse into one block.
+//
+// A third shape exists: chapters stamped "Parsed with an automated reader" carry
+// their paragraph breaks as the literal two characters '\n', while the real
+// newlines are hard-wrap noise from the same pipeline, often mid-sentence. There
+// the escapes are the only trustworthy structure: the wrapped lines are joined,
+// the '\n' escapes become real breaks, and the usual paragraph rule applies. A
+// run of two escapes is the signature — prose can mention "\n" once, but
+// "\n\n" only ever comes from a mis-encoded break.
 func normalizeProse(content string) string {
+	if strings.Contains(content, `\n\n`) {
+		var wrapped []string
+		for _, line := range strings.Split(content, "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				wrapped = append(wrapped, line)
+			}
+		}
+		content = strings.ReplaceAll(strings.Join(wrapped, " "), `\n`, "\n")
+	}
+
 	paragraphs := make([]string, 0, strings.Count(content, "\n")+1)
 	for _, line := range strings.Split(content, "\n") {
 		if line = strings.TrimSpace(line); line != "" {

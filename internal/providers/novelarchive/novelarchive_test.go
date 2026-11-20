@@ -354,6 +354,24 @@ func TestGetChapterText(t *testing.T) {
 		}
 	})
 
+	t.Run("double-encoded prose unescapes its real paragraph breaks", func(t *testing.T) {
+		// Captured from the live API: some chapters are stamped "Parsed with an
+		// automated reader" and carry their paragraph breaks as the two characters
+		// \n, while the real newlines are hard wraps, even mid-sentence.
+		p := newTestProvider(t, func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(t, w, `{"chapter":{"content":"Parsed with an automated reader. The content accuracy is not guranteed.\\n“Okay. I hope this is the right place, so\n\nlet’s start the search.”\\n\\n\\nKazuki looked around a hot spring town."}}`)
+		})
+
+		body, err := p.GetChapterText(context.Background(), domain.Chapter{ID: "3", SeriesID: testNovelID})
+		if err != nil {
+			t.Fatalf("GetChapterText() error = %v", err)
+		}
+		want := "Parsed with an automated reader. The content accuracy is not guranteed.\n\n“Okay. I hope this is the right place, so let’s start the search.”\n\nKazuki looked around a hot spring town."
+		if body != want {
+			t.Errorf("body = %q, want %q", body, want)
+		}
+	})
+
 	t.Run("from ids only", func(t *testing.T) {
 		var gotPath string
 		p := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
